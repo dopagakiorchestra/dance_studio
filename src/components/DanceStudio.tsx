@@ -1,0 +1,442 @@
+/**
+ * 振り付けの操作パネル。
+ *
+ * BPM と小節数から振り付けを組み立てて、プレビューし、動画として書き出す。
+ * 振り付けそのものは dance/ 以下が作る。ここは操作と表示だけを持つ。
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { blockLabel, generateChoreography, withOverride, type DanceSettings } from "../dance/choreo";
+import { MOVES } from "../dance/moves";
+import { createStage, drawFrame, getPalette, PALETTES } from "../dance/render";
+import { sampleSkeleton } from "../dance/sampler";
+import {
+  FRAME_RATES,
+  getVideoSize,
+  pickVideoFormat,
+  RecordAborted,
+  recordDance,
+  VIDEO_SIZES,
+  type FrameRate,
+} from "../dance/video";
+import { beatsPerLoop, secondsPerBeat, totalSeconds, type DanceProject } from "../project";
+import { saveBlob, safeFilename, saveNeedsUserTap, type SaveOutcome } from "../save";
+
+type ExportState =
+  | { kind: "idle" }
+  | { kind: "working"; ratio: number }
+  | {
+      kind: "ready";
+      blob: Blob;
+      filename: string;
+      needsTap: boolean;
+      outcome: SaveOutcome | null;
+      codec: string | null;
+    }
+  | { kind: "error"; message: string };
+
+export interface DanceStudioProps {
+  project: DanceProject;
+  onChange: (dance: DanceSettings) => void;
+  /** 再生中のループ内の拍位置。止まっていれば null。 */
+  playPosition: number | null;
+}
+
+/** プレビューの表示上の最大の高さ（CSS ピクセル）。 */
+const PREVIEW_MAX_HEIGHT = 400;
+
+export function DanceStudio({ project, onChange, playPosition }: DanceStudioProps) {
+  const dance = project.dance;
+
+  const [sizeId, setSizeId] = useState("portrait");
+  const [paletteId, setPaletteId] = useState("night");
+  const [fps, setFps] = useState<FrameRate>(30);
+  const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
+  const [previewRunning, setPreviewRunning] = useState(true);
+
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const exportRef = useRef<HTMLCanvasElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  /** 再生していないときにプレビューを回すための自前の時計。 */
+  const clockRef = useRef({ startedAt: 0, running: false });
+
+  const size = getVideoSize(sizeId);
+  const palette = getPalette(paletteId);
+  const beatSeconds = secondsPerBeat(project);
+  const loopBeats = beatsPerLoop(project);
+
+  /** rAF から最新の値を読むための箱。再描画のたびにループを張り直さないため。 */
+  const liveRef = useRef({ playPosition, secondsPerBeat: beatSeconds, bounce: dance.bounce });
+
+  const choreo = useMemo(() => generateChoreography(loopBeats, dance), [loopBeats, dance]);
+
+  // プレビューは書き出しと同じ縦横比にする。見えているものがそのまま出るように
+  const previewSize = useMemo(() => {
+    const scale = Math.min(1, PREVIEW_MAX_HEIGHT / size.height);
+    return { width: Math.round(size.width * scale), height: Math.round(size.height * scale) };
+  }, [size]);
+
+  const previewStage = useMemo(
+    () => createStage(previewSize.width, previewSize.height, choreo, dance.bounce),
+    [previewSize, choreo, dance.bounce],
+  );
+
+  const drawOptions = useMemo(() => ({ palette }), [palette]);
+
+  // 描画ループは張りっぱなしにして、変わる値だけをここから流し込む。
+  // 再生位置が更新されるたびにループを組み直すと、毎フレーム張り替えになる。
+  useEffect(() => {
+    liveRef.current = { playPosition, secondsPerBeat: beatSeconds, bounce: dance.bounce };
+  }, [playPosition, beatSeconds, dance.bounce]);
+
+  // --- プレビューの描画ループ ---
+  useEffect(() => {
+    const canvas = previewRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let raf = 0;
+    const tick = () => {
+      const live = liveRef.current;
+      let countPos: number;
+      if (live.playPosition !== null) {
+        // 再生中は音に合わせる
+        countPos = live.playPosition;
+        clockRef.current.running = false;
+      } else if (previewRunning) {
+        // 止まっているときは自前の時計で回す
+        if (!clockRef.current.running) {
+          clockRef.current = { startedAt: performance.now(), running: true };
+        }
+        countPos = (performance.now() - clockRef.current.startedAt) / 1000 / live.secondsPerBeat;
+      } else {
+        clockRef.current.running = false;
+        countPos = 0;
+      }
+
+      const skeleton = sampleSkeleton(choreo, countPos, { bounce: live.bounce });
+      drawFrame(ctx, skeleton, previewStage, drawOptions);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [choreo, previewStage, drawOptions, previewRunning]);
+
+  const patch = useCallback(
+    (next: Partial<DanceSettings>) => onChange({ ...dance, ...next }),
+    [dance, onChange],
+  );
+
+  const reroll = useCallback(() => {
+    // 手で決めたブロックは残したまま、自動のところだけ引き直す
+    patch({ seed: 1 + Math.floor(Math.random() * 999998) });
+  }, [patch]);
+
+  const videoFormat = useMemo(() => pickVideoFormat(), []);
+  const canRecord =
+    videoFormat !== null &&
+    typeof HTMLCanvasElement !== "undefined" &&
+    typeof HTMLCanvasElement.prototype.captureStream === "function";
+
+  const exportSeconds = totalSeconds(project);
+
+  const handleExport = useCallback(async () => {
+    const canvas = exportRef.current;
+    if (!canvas || !canRecord) return;
+
+    canvas.width = size.width;
+    canvas.height = size.height;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setExportState({ kind: "working", ratio: 0 });
+
+    try {
+      const stage = createStage(size.width, size.height, choreo, dance.bounce);
+      const result = await recordDance({
+        canvas,
+        choreo,
+        stage,
+        draw: { palette },
+        bounce: dance.bounce,
+        secondsPerBeat: beatSeconds,
+        totalBeats: loopBeats * project.repeats,
+        fps,
+        signal: controller.signal,
+        onProgress: (ratio) => setExportState({ kind: "working", ratio }),
+      });
+
+      const filename = safeFilename(`dance-${dance.seed}`) + `.${result.format.extension}`;
+      const base = { kind: "ready" as const, blob: result.blob, filename, codec: result.codec };
+      if (saveNeedsUserTap()) {
+        setExportState({ ...base, needsTap: true, outcome: null });
+      } else {
+        setExportState({ ...base, needsTap: false, outcome: await saveBlob(result.blob, filename) });
+      }
+    } catch (err) {
+      if (err instanceof RecordAborted) {
+        setExportState({ kind: "idle" });
+        return;
+      }
+      setExportState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "動画を作れませんでした。",
+      });
+    } finally {
+      abortRef.current = null;
+    }
+  }, [
+    canRecord,
+    size,
+    choreo,
+    dance.bounce,
+    dance.seed,
+    loopBeats,
+    project.repeats,
+    palette,
+    beatSeconds,
+    fps,
+  ]);
+
+  const handleManualSave = useCallback(async () => {
+    if (exportState.kind !== "ready") return;
+    const outcome = await saveBlob(exportState.blob, exportState.filename);
+    setExportState({ ...exportState, needsTap: false, outcome });
+  }, [exportState]);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  const barsPerBlock = 8 / project.beatsPerBar;
+
+  return (
+    <>
+      <section className="panel">
+        <h2>振り付けとプレビュー</h2>
+        <div className="dance-layout">
+          <div className="dance-preview">
+            <canvas
+              ref={previewRef}
+              width={previewSize.width}
+              height={previewSize.height}
+              style={{ width: previewSize.width, height: previewSize.height }}
+            />
+            <div className="row">
+              <button className="btn" onClick={() => setPreviewRunning((v) => !v)}>
+                {previewRunning ? "⏸ プレビュー停止" : "▶ プレビュー再生"}
+              </button>
+              <button className="btn" onClick={reroll}>
+                🎲 振り付けを引き直す
+              </button>
+            </div>
+            <p className="hint">
+              シード {dance.seed} ／ {choreo.blocks.length} ブロック（{loopBeats} 拍）
+              {playPosition !== null && " ／ 音源に同期中"}
+            </p>
+          </div>
+
+          <div className="dance-controls">
+            <div className="row">
+              <div className="field">
+                <label htmlFor="dance-intensity">動きの大きさ</label>
+                <input
+                  id="dance-intensity"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={dance.intensity}
+                  onChange={(e) => patch({ intensity: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="dance-bounce">ビートの乗り</label>
+                <input
+                  id="dance-bounce"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={dance.bounce}
+                  onChange={(e) => patch({ bounce: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+
+            <div className="row">
+              <div className="field">
+                <label htmlFor="dance-size">サイズ</label>
+                <select id="dance-size" value={sizeId} onChange={(e) => setSizeId(e.target.value)}>
+                  {VIDEO_SIZES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="dance-palette">配色</label>
+                <select
+                  id="dance-palette"
+                  value={paletteId}
+                  onChange={(e) => setPaletteId(e.target.value)}
+                >
+                  {PALETTES.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="dance-fps">フレームレート</label>
+                <select
+                  id="dance-fps"
+                  value={fps}
+                  onChange={(e) => setFps(Number(e.target.value) as FrameRate)}
+                >
+                  {FRAME_RATES.map((r) => (
+                    <option key={r} value={r}>
+                      {r} fps
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <p className="hint">
+              「動きの大きさ」を上げると、大ぶりな振りが選ばれやすくなります。
+              「ビートの乗り」は拍に合わせた上下動の深さです。0 にすると踊っているように
+              見えなくなるので、少しは残しておくのがおすすめです。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>振り付けの中身</h2>
+        <p className="hint">
+          8カウント（{barsPerBlock === 1 ? "1小節" : `${barsPerBlock}小節`}
+          ）ごとのブロックです。気に入らないところだけ差し替えられます。
+          手で選んだブロックは、引き直してもそのまま残ります。
+        </p>
+        <ol className="dance-blocks">
+          {choreo.blocks.map((block, index) => (
+            <li key={index} className={block.manual ? "manual" : undefined}>
+              <span className="dance-block-range">
+                {Math.floor(block.startCount / project.beatsPerBar) + 1}–
+                {Math.floor((block.startCount + block.counts - 0.001) / project.beatsPerBar) + 1}
+                小節
+              </span>
+              <select
+                value={block.manual ? block.moveId : "auto"}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  onChange(
+                    withOverride(
+                      dance,
+                      index,
+                      value === "auto" ? null : { moveId: value, mirrored: block.mirrored },
+                    ),
+                  );
+                }}
+              >
+                {/* 手動のときは「自動なら何が来るか」が分からないので名前を出さない */}
+                <option value="auto">{block.manual ? "自動" : `自動（${blockLabel(block)}）`}</option>
+                {MOVES.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              <label className="checkline">
+                <input
+                  type="checkbox"
+                  checked={block.mirrored}
+                  onChange={(e) =>
+                    onChange(
+                      withOverride(dance, index, {
+                        moveId: block.moveId,
+                        mirrored: e.target.checked,
+                      }),
+                    )
+                  }
+                />
+                左右反転
+              </label>
+            </li>
+          ))}
+        </ol>
+        {dance.overrides.some((o) => o !== null) && (
+          <button className="btn" onClick={() => patch({ overrides: [] })}>
+            すべて自動に戻す
+          </button>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>動画を書き出す</h2>
+        {!canRecord ? (
+          <p className="hint">
+            このブラウザは動画の書き出し（MediaRecorder ＋ canvas.captureStream）に
+            対応していません。PC の Chrome か Safari でお試しください。
+          </p>
+        ) : (
+          <>
+            <div className="row">
+              <button
+                className="btn primary"
+                onClick={handleExport}
+                disabled={exportState.kind === "working"}
+              >
+                {exportState.kind === "working" ? "録画中…" : "🎬 動画を書き出す"}
+              </button>
+              {exportState.kind === "working" && (
+                <button className="btn" onClick={() => abortRef.current?.abort()}>
+                  中止
+                </button>
+              )}
+              {exportState.kind === "ready" && exportState.needsTap && (
+                <button className="btn primary" onClick={handleManualSave}>
+                  保存する
+                </button>
+              )}
+            </div>
+
+            {exportState.kind === "working" && (
+              <p className="hint">
+                {Math.round(exportState.ratio * 100)}%
+                ／録画は実時間かかります（約 {Math.ceil(exportSeconds)} 秒）。
+                終わるまでこのタブを開いたままにしてください。
+              </p>
+            )}
+            {exportState.kind === "ready" && (
+              <p className="hint">
+                {exportState.filename} を作りました
+                {exportState.codec && `（${exportState.codec}）`}
+                {exportState.outcome === "blocked" &&
+                  "。この表示のままでは保存できないので、単独のタブで開き直してください"}
+                。
+              </p>
+            )}
+            {exportState.kind === "error" && <p className="hint">{exportState.message}</p>}
+            {exportState.kind !== "working" && (
+              <p className="hint">
+                形式は {videoFormat?.label}、長さは「小節数 × くり返し」で決まります
+                （今は約 {Math.ceil(exportSeconds)} 秒）。
+                映像変換サービスは尺の上限があることが多いので、まずは 8〜16 小節で
+                試すのが安全です。
+              </p>
+            )}
+          </>
+        )}
+
+        {/* 書き出し用。captureStream を使うため、画面外だが描画される場所に置く */}
+        <canvas ref={exportRef} className="dance-export-canvas" />
+      </section>
+    </>
+  );
+}

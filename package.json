@@ -1,0 +1,32 @@
+{
+  "name": "dance-studio",
+  "private": true,
+  "version": "1.0.0",
+  "description": "マネキンが踊る無音動画を作る、映像変換サービス向けの素材づくりアプリ",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dopagakiorchestra/dance_studio.git"
+  },
+  "homepage": "https://dopagakiorchestra.github.io/dance_studio/",
+  "license": "ISC",
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
+  }
+}
