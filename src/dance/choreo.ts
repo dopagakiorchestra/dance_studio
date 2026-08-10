@@ -46,6 +46,13 @@ export interface DanceSettings {
   /** ビートに乗った上下動の強さ 0..1。 */
   bounce: number;
   /**
+   * 体の連鎖の強さ 0..1。
+   *
+   * 腰から手先へ向かって、動きの到達を少しずつ遅らせる量。0 だと全関節が
+   * 同じ瞬間に到達して、人形が同時に折れ曲がったように見える。
+   */
+  chain: number;
+  /**
    * ブロックごとの手動指定。長さはブロック数と一致しなくてよく、
    * 範囲外や未指定（null）のブロックは自動生成に任せる。
    */
@@ -61,6 +68,7 @@ export const DEFAULT_DANCE: DanceSettings = {
   seed: 1,
   intensity: 0.7,
   bounce: 0.6,
+  chain: 0.6,
   overrides: [],
 };
 
@@ -238,6 +246,7 @@ export function normalizeDance(raw: unknown): DanceSettings {
     seed: Math.round(num(o.seed, 1, 999999, DEFAULT_DANCE.seed)),
     intensity: num(o.intensity, 0, 1, DEFAULT_DANCE.intensity),
     bounce: num(o.bounce, 0, 1, DEFAULT_DANCE.bounce),
+    chain: num(o.chain, 0, 1, DEFAULT_DANCE.chain),
     overrides,
   };
 }

@@ -12,7 +12,7 @@
  */
 
 import type { Choreography } from "./choreo";
-import { sampleSkeleton } from "./sampler";
+import { sampleSkeleton, type SampleOptions } from "./sampler";
 import {
   HEAD_RADIUS,
   JOINT_NAMES,
@@ -124,7 +124,7 @@ export function createStage(
   width: number,
   height: number,
   choreo: Choreography,
-  bounce: number,
+  opts: SampleOptions,
 ): Stage {
   let uMin = Infinity;
   let uMax = -Infinity;
@@ -134,7 +134,7 @@ export function createStage(
   const step = 0.25;
   const samples = Math.max(1, Math.ceil(choreo.totalCounts / step));
   for (let i = 0; i < samples; i++) {
-    const skeleton = sampleSkeleton(choreo, i * step, { bounce });
+    const skeleton = sampleSkeleton(choreo, i * step, opts);
     for (const name of JOINT_NAMES) {
       const { u, v, d } = normalize(skeleton.pos[name]);
       const margin = ((JOINT_RADIUS[name] ?? 0) * CAM.z) / d;

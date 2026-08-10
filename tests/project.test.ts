@@ -78,9 +78,12 @@ describe("設定の正規化", () => {
   });
 
   it("振り付けの設定も併せて正規化する", () => {
-    const project = normalizeProject({ dance: { seed: 5, intensity: 99, overrides: "だめ" } });
+    const project = normalizeProject({
+      dance: { seed: 5, intensity: 99, chain: -3, overrides: "だめ" },
+    });
     expect(project.dance.seed).toBe(5);
     expect(project.dance.intensity).toBe(1);
+    expect(project.dance.chain).toBe(0);
     expect(project.dance.overrides).toEqual([]);
   });
 

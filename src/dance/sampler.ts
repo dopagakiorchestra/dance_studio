@@ -34,8 +34,28 @@ import {
  */
 const BLEND_HALF = 0.25;
 
+/**
+ * キメのブロックに接する境界での繋ぎ幅。
+ *
+ * 締めのポーズは決まった瞬間に止まって見えてほしいが、通常の繋ぎ幅だと
+ * その前後 0.25 カウントが常にクロスフェードに食われて、キメが丸くなる。
+ * ここだけ狭くして、締めをはっきりさせる。
+ *
+ * 狭くするほど手先の速度が上がるので、際限なく詰められるわけではない。
+ * この値は「動きが飛ばない」テストの実測値を見ながら決めてある。
+ */
+const ACCENT_BLEND_HALF = 0.14;
+
 /** バウンスの最大の沈み込み（ワールド単位）。 */
 const MAX_DIP = 0.055;
+
+/**
+ * 1ビートのうち、沈み込みに使う割合。残りは戻り（浮き上がり）に使う。
+ *
+ * 対称な cos で上下させると「浮いている」ように見える。実際の体は
+ * ゆっくり伸び上がって素早く落ちるので、落ちる側を短くすると重さが出る。
+ */
+const DROP_SHARE = 0.38;
 
 /** 太もも＋すねの長さ。しゃがみ角度の計算に使う。 */
 const LEG_SEGMENT = 0.44;
@@ -107,9 +127,26 @@ function addRot(j: Partial<Record<JointName, Rot>>, name: JointName, dx: number,
  * 腰を下げるだけだと足が地面にめり込むので、沈んだぶんだけ膝を曲げて
  * 足首の位置を保つ。太もも α・膝 2α で、足首がほぼ真下に留まる。
  */
+/**
+ * 拍の中の位相 0..1 に対する沈み込みの深さ 0..1。
+ *
+ * 位相 0（拍の頭）が一番沈んだ瞬間。そこから時間をかけて伸び上がり、
+ * 次の拍の直前で一気に落ちる。両端とも cos の半波なので、繋ぎ目では
+ * 速度が 0 になり、段差も折れも出ない。
+ */
+function bounceDip(beatPhase: number): number {
+  const rise = 1 - DROP_SHARE;
+  if (beatPhase < rise) {
+    // 伸び上がり: 1 → 0。時間をかける
+    return 0.5 + 0.5 * Math.cos(Math.PI * (beatPhase / rise));
+  }
+  // 沈み込み: 0 → 1。短く速く
+  return 0.5 - 0.5 * Math.cos(Math.PI * ((beatPhase - rise) / DROP_SHARE));
+}
+
 function applyBounce(pose: Pose, beatPhase: number, amount: number): Pose {
   if (amount <= 0) return pose;
-  const dip = MAX_DIP * amount * (0.5 + 0.5 * Math.cos(2 * Math.PI * beatPhase));
+  const dip = MAX_DIP * amount * bounceDip(beatPhase);
   if (dip <= 0.0005) return pose;
 
   const cos = Math.min(1, Math.max(-1, 1 - dip / (2 * LEG_SEGMENT)));
@@ -128,49 +165,116 @@ function applyBounce(pose: Pose, beatPhase: number, amount: number): Pose {
   return { root: { ...root, y: (root.y ?? HIP_HEIGHT) - dip }, j };
 }
 
+/**
+ * 体の連鎖（キネティックチェーン）の段。
+ *
+ * 実際の体は腰から手先へ向かって順に動く。腰が向きを変え、少し遅れて胸が
+ * ついてきて、最後に手先が振られる。全関節が同時に到達すると、人形が一斉に
+ * 折れ曲がったように見えて、これが硬さの正体になる。
+ *
+ * 脚は体重を支えていて先に動くので段 0。そこから背骨を上って手先が最後。
+ * 遅れの量は「拍に対する割合」で持つ。テンポが変われば遅れも一緒に伸び縮み
+ * するほうが、音に対する乗り方としては自然。
+ */
+const CHAIN_TIERS: Array<{ steps: number; joints: JointName[] }> = [
+  { steps: 1, joints: ["spine"] },
+  { steps: 2, joints: ["chest", "neck", "upperArmL", "upperArmR"] },
+  { steps: 3, joints: ["head", "headTop", "forearmL", "forearmR"] },
+  { steps: 4, joints: ["handL", "handTipL", "handR", "handTipR"] },
+];
+
+/** 段ひとつぶんの遅れ（カウント）。最大でも 4 段なので全体で 0.2 カウント。 */
+const CHAIN_STEP = 0.05;
+
 export interface SampleOptions {
   /** 上下動の強さ 0..1。 */
   bounce: number;
+  /** 体の連鎖の強さ 0..1。省略時は連鎖なし。 */
+  chain?: number;
 }
 
 /**
  * ループ内のカウント位置に対応するポーズを返す。
  * countPos はループ長で自動的に巻き戻すので、何拍目でも渡してよい。
  */
-export function samplePose(
-  choreo: Choreography,
-  countPos: number,
-  opts: SampleOptions = { bounce: 0 },
-): Pose {
+/** そのブロックに接する境界で使う繋ぎ幅。キメだけ狭くする。 */
+function blendHalfFor(block: ChoreoBlock): number {
+  return getMove(block.moveId)?.accent ? ACCENT_BLEND_HALF : BLEND_HALF;
+}
+
+/**
+ * ブロックの繋ぎまで含めた、ある時刻の振り付けのポーズ。
+ * バウンスと体の連鎖はここには入らない。
+ */
+function choreoPoseAt(choreo: Choreography, pos: number): Pose {
   const blocks = choreo.blocks;
-  if (blocks.length === 0) return {};
-
-  const total = choreo.totalCounts;
-  const pos = total > 0 ? ((countPos % total) + total) % total : 0;
-
   const index = findBlockIndex(blocks, pos);
   const block = blocks[index];
   const local = pos - block.startCount;
   const prev = blocks[(index - 1 + blocks.length) % blocks.length];
   const next = blocks[(index + 1) % blocks.length];
 
-  // 繋ぎの幅は境界の両側で同じ値でなければならない。短いブロックに合わせて縮める。
-  const halfIn = Math.min(BLEND_HALF, block.counts / 2, prev.counts / 2);
-  const halfOut = Math.min(BLEND_HALF, block.counts / 2, next.counts / 2);
+  // 繋ぎの幅は境界の両側で同じ値でなければならない。境界に入っていく側の
+  // ブロックで決めると、どちらから見ても同じ値になる。
+  // 短いブロックに合わせて縮めるのも従来どおり。
+  const halfIn = Math.min(blendHalfFor(block), block.counts / 2, prev.counts / 2);
+  const halfOut = Math.min(blendHalfFor(next), block.counts / 2, next.counts / 2);
 
-  let pose = samplePoseInBlock(block, local);
+  const pose = samplePoseInBlock(block, local);
 
   if (local < halfIn) {
     // 境界の後ろ半分。前のブロックは終わりのポーズで止まっている。
     // 先頭ブロックの1つ前は最後のブロックなので、ループの継ぎ目もここで繋がる。
     const from = samplePoseInBlock(prev, prev.counts + local);
-    pose = blendPose(from, pose, ease("inout", 0.5 + local / (2 * halfIn)));
-  } else if (local > block.counts - halfOut) {
+    return blendPose(from, pose, ease("inout", 0.5 + local / (2 * halfIn)));
+  }
+  if (local > block.counts - halfOut) {
     // 境界の手前半分。次のブロックは頭のポーズで待っている
     const to = samplePoseInBlock(next, local - block.counts);
     const t = (local - (block.counts - halfOut)) / (2 * halfOut);
-    pose = blendPose(pose, to, ease("inout", t));
+    return blendPose(pose, to, ease("inout", t));
   }
+  return pose;
+}
+
+/** ループ長で巻き戻した位置。 */
+function wrap(countPos: number, total: number): number {
+  return total > 0 ? ((countPos % total) + total) % total : 0;
+}
+
+/**
+ * 段ごとに時刻をずらしてサンプルし、体の連鎖を作る。
+ *
+ * 腰（段 0）が今の時刻、手先（段 4）が一番過去を見る。関節の回転を
+ * 差し替えるだけなので、骨の長さは変わらない。
+ */
+function chainedPose(choreo: Choreography, pos: number, total: number, chain: number): Pose {
+  const base = choreoPoseAt(choreo, pos);
+  if (chain <= 0) return base;
+
+  const j = { ...base.j };
+  for (const tier of CHAIN_TIERS) {
+    const lagged = choreoPoseAt(choreo, wrap(pos - CHAIN_STEP * tier.steps * chain, total));
+    for (const name of tier.joints) {
+      const rot = lagged.j?.[name];
+      // 遅れた側に指定が無ければ回転 0。base の値を残すと連鎖が崩れる
+      if (rot) j[name] = rot;
+      else delete j[name];
+    }
+  }
+  return { root: base.root, j };
+}
+
+export function samplePose(
+  choreo: Choreography,
+  countPos: number,
+  opts: SampleOptions = { bounce: 0 },
+): Pose {
+  if (choreo.blocks.length === 0) return {};
+
+  const total = choreo.totalCounts;
+  const pos = wrap(countPos, total);
+  const pose = chainedPose(choreo, pos, total, opts.chain ?? 0);
 
   return applyBounce(pose, pos - Math.floor(pos), opts.bounce);
 }

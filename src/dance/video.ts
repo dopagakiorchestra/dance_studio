@@ -80,6 +80,8 @@ export interface RecordDanceOptions {
   stage: Stage;
   draw: DrawOptions;
   bounce: number;
+  /** 体の連鎖の強さ 0..1。 */
+  chain?: number;
   /** 1拍の秒数。 */
   secondsPerBeat: number;
   /** 書き出す長さ（拍）。 */
@@ -196,6 +198,7 @@ export async function recordDance(opts: RecordDanceOptions): Promise<RecordDance
       const clamped = Math.min(elapsed, duration);
       const skeleton = sampleSkeleton(opts.choreo, clamped / opts.secondsPerBeat, {
         bounce: opts.bounce,
+        chain: opts.chain,
       });
       drawFrame(ctx, skeleton, opts.stage, opts.draw);
       opts.onProgress?.(Math.max(0, Math.min(0.999, elapsed / duration)));

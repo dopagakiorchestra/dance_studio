@@ -289,6 +289,130 @@ describe("ポーズの取り出し", () => {
   });
 });
 
+describe("キレ（止めと連鎖）", () => {
+  const choreo = generateChoreography(32, settings({ seed: 7 }));
+
+  /** step 区間あたりの最大移動量。「動きが飛ばない」テストと同じ尺度。 */
+  function peakSpeed(opts: { bounce: number; chain?: number }, from = 0, to = 32): number {
+    const step = 0.02;
+    let worst = 0;
+    let prev = sampleSkeleton(choreo, from - step, opts).pos;
+    for (let count = from; count <= to; count += step) {
+      const cur = sampleSkeleton(choreo, count, opts).pos;
+      for (const name of JOINT_NAMES) {
+        worst = Math.max(
+          worst,
+          Math.hypot(
+            cur[name].x - prev[name].x,
+            cur[name].y - prev[name].y,
+            cur[name].z - prev[name].z,
+          ),
+        );
+      }
+      prev = cur;
+    }
+    return worst;
+  }
+
+  it("体の連鎖を入れても手先の速度が上がらない", () => {
+    // ここが上がると映像変換がフレーム間で破綻する。連鎖は到達の順番を
+    // ずらすだけで、通る距離も時間も変えないので速度は増えない。
+    // これが「速く動かす」より先に連鎖を入れている理由。
+    const flat = peakSpeed({ bounce: 0.6, chain: 0 });
+    const chained = peakSpeed({ bounce: 0.6, chain: 1 });
+    expect(chained).toBeLessThanOrEqual(flat * 1.05);
+  });
+
+  it("体の連鎖で腰より手先が遅れて到達する", () => {
+    // 動きの速いところを探して、そこで手先が過去の位置に居ることを見る
+    const opts = { bounce: 0, chain: 1 };
+    let found = false;
+    for (let count = 0; count < 32; count += 0.25) {
+      const chained = sampleSkeleton(choreo, count, opts).pos;
+      const flat = sampleSkeleton(choreo, count, { bounce: 0, chain: 0 }).pos;
+      const past = sampleSkeleton(choreo, count - 0.2, { bounce: 0, chain: 0 }).pos;
+      const toFlat = Math.hypot(
+        chained.handTipL.x - flat.handTipL.x,
+        chained.handTipL.y - flat.handTipL.y,
+        chained.handTipL.z - flat.handTipL.z,
+      );
+      const toPast = Math.hypot(
+        chained.handTipL.x - past.handTipL.x,
+        chained.handTipL.y - past.handTipL.y,
+        chained.handTipL.z - past.handTipL.z,
+      );
+      // 今の位置より過去の位置に近いフレームが存在すれば、遅れている
+      if (toFlat > 0.01 && toPast < toFlat) found = true;
+    }
+    expect(found).toBe(true);
+  });
+
+  it("連鎖を入れても骨の長さは変わらない", () => {
+    // 回転を差し替えているだけなので、手足が伸びてはいけない
+    const rest = boneLengths({});
+    for (const count of [3.3, 12.7, 24.1]) {
+      const lengths = boneLengths(samplePose(choreo, count, { bounce: 0.6, chain: 1 }));
+      for (const [name, value] of lengths) {
+        expect(value).toBeCloseTo(rest.get(name)!, 6);
+      }
+    }
+  });
+
+  it("キメのブロックは長く静止する", () => {
+    const still = (from: number, to: number): number => {
+      const step = 0.02;
+      const limit = REST_HEIGHT * 0.06 * 0.05;
+      let total = 0;
+      let prev = sampleSkeleton(choreo, from - step, { bounce: 0.6, chain: 0.6 }).pos;
+      for (let count = from; count <= to; count += step) {
+        const cur = sampleSkeleton(choreo, count, { bounce: 0.6, chain: 0.6 }).pos;
+        let move = 0;
+        for (const name of JOINT_NAMES) {
+          move = Math.max(
+            move,
+            Math.hypot(
+              cur[name].x - prev[name].x,
+              cur[name].y - prev[name].y,
+              cur[name].z - prev[name].z,
+            ),
+          );
+        }
+        if (move < limit) total += step;
+        prev = cur;
+      }
+      return total;
+    };
+
+    const accent = choreo.blocks.find((b) => getMove(b.moveId)?.accent);
+    expect(accent).toBeDefined();
+    // 締めが丸まっていると、ここが 1拍を割る
+    expect(still(accent!.startCount, accent!.startCount + accent!.counts)).toBeGreaterThan(1.5);
+  });
+
+  it("バウンスは沈むほうが速い（浮いて見えないため）", () => {
+    // 拍の頭が一番沈んだ瞬間。その直前（沈み込み）のほうが、
+    // 拍の直後（伸び上がり）より腰の移動が速い
+    const hipY = (count: number): number =>
+      sampleSkeleton(choreo, count, { bounce: 1, chain: 0 }).pos.hips.y;
+    const d = 0.04;
+    const dropping = Math.abs(hipY(8 - d) - hipY(8 - 2 * d));
+    const rising = Math.abs(hipY(8 + d) - hipY(8 + 2 * d));
+    expect(dropping).toBeGreaterThan(rising);
+  });
+
+  it("バウンスの上下動が滑らかに繋がる（拍をまたいでも段差が出ない）", () => {
+    const hipY = (count: number): number =>
+      sampleSkeleton(choreo, count, { bounce: 1, chain: 0 }).pos.hips.y;
+    const step = 0.005;
+    let worst = 0;
+    // 拍の境目をまたぐ範囲だけを細かく見る
+    for (let count = 7.8; count <= 8.2; count += step) {
+      worst = Math.max(worst, Math.abs(hipY(count) - hipY(count - step)));
+    }
+    expect(worst).toBeLessThan(0.004);
+  });
+});
+
 describe("画角", () => {
   it("振り付け全体を通して、手足が画面から切れない", () => {
     for (const [width, height] of [
@@ -298,7 +422,7 @@ describe("画角", () => {
     ]) {
       for (const seed of [1, 2, 3, 17]) {
         const choreo = generateChoreography(32, settings({ seed }));
-        const stage = createStage(width, height, choreo, 0.6);
+        const stage = createStage(width, height, choreo, { bounce: 0.6 });
         for (let count = 0; count < choreo.totalCounts; count += 0.25) {
           const bounds = frameBounds(sampleSkeleton(choreo, count, { bounce: 0.6 }), stage);
           expect(bounds.minX).toBeGreaterThanOrEqual(-0.5);
@@ -312,7 +436,7 @@ describe("画角", () => {
 
   it("必要以上に引かない（被写体が画面の半分以上を占める）", () => {
     const choreo = generateChoreography(32, settings({ seed: 5 }));
-    const stage = createStage(720, 1280, choreo, 0.6);
+    const stage = createStage(720, 1280, choreo, { bounce: 0.6 });
     let tallest = 0;
     for (let count = 0; count < choreo.totalCounts; count += 0.25) {
       const bounds = frameBounds(sampleSkeleton(choreo, count, { bounce: 0.6 }), stage);

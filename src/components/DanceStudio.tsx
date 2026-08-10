@@ -66,8 +66,14 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
   const beatSeconds = secondsPerBeat(project);
   const loopBeats = beatsPerLoop(project);
 
+  /** 描画に使うサンプリング設定。プレビューと書き出しで必ず同じものを使う。 */
+  const sampleOpts = useMemo(
+    () => ({ bounce: dance.bounce, chain: dance.chain }),
+    [dance.bounce, dance.chain],
+  );
+
   /** rAF から最新の値を読むための箱。再描画のたびにループを張り直さないため。 */
-  const liveRef = useRef({ playPosition, secondsPerBeat: beatSeconds, bounce: dance.bounce });
+  const liveRef = useRef({ playPosition, secondsPerBeat: beatSeconds, opts: sampleOpts });
 
   const choreo = useMemo(() => generateChoreography(loopBeats, dance), [loopBeats, dance]);
 
@@ -78,8 +84,8 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
   }, [size]);
 
   const previewStage = useMemo(
-    () => createStage(previewSize.width, previewSize.height, choreo, dance.bounce),
-    [previewSize, choreo, dance.bounce],
+    () => createStage(previewSize.width, previewSize.height, choreo, sampleOpts),
+    [previewSize, choreo, sampleOpts],
   );
 
   const drawOptions = useMemo(() => ({ palette }), [palette]);
@@ -87,8 +93,8 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
   // 描画ループは張りっぱなしにして、変わる値だけをここから流し込む。
   // 再生位置が更新されるたびにループを組み直すと、毎フレーム張り替えになる。
   useEffect(() => {
-    liveRef.current = { playPosition, secondsPerBeat: beatSeconds, bounce: dance.bounce };
-  }, [playPosition, beatSeconds, dance.bounce]);
+    liveRef.current = { playPosition, secondsPerBeat: beatSeconds, opts: sampleOpts };
+  }, [playPosition, beatSeconds, sampleOpts]);
 
   // --- プレビューの描画ループ ---
   useEffect(() => {
@@ -116,7 +122,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
         countPos = 0;
       }
 
-      const skeleton = sampleSkeleton(choreo, countPos, { bounce: live.bounce });
+      const skeleton = sampleSkeleton(choreo, countPos, live.opts);
       drawFrame(ctx, skeleton, previewStage, drawOptions);
       raf = requestAnimationFrame(tick);
     };
@@ -154,13 +160,14 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
     setExportState({ kind: "working", ratio: 0 });
 
     try {
-      const stage = createStage(size.width, size.height, choreo, dance.bounce);
+      const stage = createStage(size.width, size.height, choreo, sampleOpts);
       const result = await recordDance({
         canvas,
         choreo,
         stage,
         draw: { palette },
         bounce: dance.bounce,
+        chain: dance.chain,
         secondsPerBeat: beatSeconds,
         totalBeats: loopBeats * project.repeats,
         fps,
@@ -191,7 +198,9 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
     canRecord,
     size,
     choreo,
+    sampleOpts,
     dance.bounce,
+    dance.chain,
     dance.seed,
     loopBeats,
     project.repeats,
@@ -264,6 +273,18 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
                   onChange={(e) => patch({ bounce: Number(e.target.value) })}
                 />
               </div>
+              <div className="field">
+                <label htmlFor="dance-chain">体の連鎖</label>
+                <input
+                  id="dance-chain"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={dance.chain}
+                  onChange={(e) => patch({ chain: Number(e.target.value) })}
+                />
+              </div>
             </div>
 
             <div className="row">
@@ -311,6 +332,9 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
               「動きの大きさ」を上げると、大ぶりな振りが選ばれやすくなります。
               「ビートの乗り」は拍に合わせた上下動の深さです。0 にすると踊っているように
               見えなくなるので、少しは残しておくのがおすすめです。
+              「体の連鎖」は腰から手先へ動きが伝わる遅れの量です。0 だと全身が同時に
+              動いて人形のように見えます。上げるほど生き物らしくなりますが、
+              上げすぎると振りがぼやけます。
             </p>
           </div>
         </div>
