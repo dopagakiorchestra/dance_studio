@@ -413,6 +413,81 @@ describe("キレ（止めと連鎖）", () => {
   });
 });
 
+describe("肘", () => {
+  /** 肩→肘 と 肘→手 のなす角。実際に曲がっている量。 */
+  function elbowAngle(pose: Pose, side: "L" | "R"): number {
+    const { pos } = solvePose(pose);
+    const a = pos[`upperArm${side}`];
+    const b = pos[`forearm${side}`];
+    const c = pos[`hand${side}`];
+    const u = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+    const v = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+    const dot = u.x * v.x + u.y * v.y + u.z * v.z;
+    const cos = dot / (Math.hypot(u.x, u.y, u.z) * Math.hypot(v.x, v.y, v.z));
+    return (Math.acos(Math.min(1, Math.max(-1, cos))) * 180) / Math.PI;
+  }
+
+  it("Y 回転では肘が曲がらない（ひねりにしかならない）", () => {
+    // この取り違えで、振り付け側の肘指定が長らく無効になっていた。
+    // 前腕は -Y 方向に伸びているので、Y 軸まわりに回しても手の位置が動かない
+    expect(elbowAngle({ j: { forearmL: [0, -110, 0] } }, "L")).toBeCloseTo(0, 6);
+    // 曲がるのは X（前後）と Z（横）
+    expect(elbowAngle({ j: { forearmL: [-70, 0, 0] } }, "L")).toBeCloseTo(70, 6);
+    expect(elbowAngle({ j: { forearmL: [0, 0, -26] } }, "L")).toBeCloseTo(26, 6);
+  });
+
+  it("振り付けデータに効かない肘指定が残っていない", () => {
+    for (const move of MOVES) {
+      for (const frame of move.keyframes) {
+        for (const name of ["forearmL", "forearmR"] as const) {
+          const rot = frame.pose.j?.[name];
+          if (!rot) continue;
+          // Y だけに値が入っていたら、それは曲がらない指定
+          const bends = Math.hypot(rot[0], rot[2]);
+          if (rot[1] !== 0) expect(bends).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("肘が逆向きに曲がらない（人体は過伸展しない）", () => {
+    for (const move of MOVES) {
+      for (const frame of move.keyframes) {
+        for (const name of ["forearmL", "forearmR"] as const) {
+          const rot = frame.pose.j?.[name];
+          if (!rot) continue;
+          // X の + は後ろ向き＝過伸展
+          expect(rot[0]).toBeLessThanOrEqual(0);
+        }
+      }
+    }
+  });
+
+  it("振り付け全体を通して肘が伸び切らない", () => {
+    // 伸び切った腕は棒に見える。脱力していても人の肘は少し曲がっている
+    for (const seed of [1, 7, 42]) {
+      const choreo = generateChoreography(32, settings({ seed }));
+      for (let count = 0; count < 32; count += 0.25) {
+        const pose = samplePose(choreo, count, { bounce: 0.6, chain: 0.6 });
+        for (const side of ["L", "R"] as const) {
+          expect(elbowAngle(pose, side)).toBeGreaterThan(3);
+        }
+      }
+    }
+  });
+
+  it("大きく曲げたパーツはそのまま残る（自動の緩みに潰されない）", () => {
+    // armPump は肘を 110 度たたんで突き上げる。ここが緩められると形が崩れる
+    const choreo = generateChoreography(8, settings({ overrides: [{ moveId: "armPump", mirrored: false }] }));
+    let peak = 0;
+    for (let count = 0; count < 8; count += 0.1) {
+      const pose = samplePose(choreo, count, { bounce: 0, chain: 0 });
+      peak = Math.max(peak, elbowAngle(pose, "L"), elbowAngle(pose, "R"));
+    }
+    expect(peak).toBeGreaterThan(100);
+  });
+});
+
 describe("画角", () => {
   it("振り付け全体を通して、手足が画面から切れない", () => {
     for (const [width, height] of [

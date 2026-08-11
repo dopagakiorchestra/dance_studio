@@ -53,9 +53,56 @@ function merge(...poses: Pose[]): Pose {
   return root ? { root, j } : { j };
 }
 
-/** 腕だけのポーズ。 */
-function arms(l: Rot, r: Rot, foreL: Rot = [0, 0, 0], foreR: Rot = [0, 0, 0]): Pose {
+/**
+ * 肘を脱力させたときの曲がり（度）。
+ *
+ * 人の腕は力を抜いていても完全には伸びない。0 にすると全身が棒に見えるので、
+ * 既定でこれだけ曲げておく。ここを 0 にしていたせいで、腕の指定を書かない
+ * 限り必ず真っ直ぐになっていた。
+ */
+const ELBOW_REST = 10;
+
+/**
+ * 腕だけのポーズ。
+ *
+ * 前腕の既定は「少し曲げた状態」。まっすぐが既定だと、書き手が意識して
+ * 指定しない限り棒の腕になってしまう。
+ */
+function arms(
+  l: Rot,
+  r: Rot,
+  foreL: Rot = [-ELBOW_REST, 0, 0],
+  foreR: Rot = [-ELBOW_REST, 0, 0],
+): Pose {
   return { j: { upperArmL: l, upperArmR: r, forearmL: foreL, forearmR: foreR } };
+}
+
+/**
+ * 肘の曲げ。左右で同じ値を渡す。
+ *
+ * 肘は X 回転でしか曲がらない。前腕は -Y 方向に伸びているので、Y 回転は
+ * その軸まわりのひねりにしかならず、見た目は一切変わらない（実測 0.0 度）。
+ * 左右反転は Y と Z の符号を反転して X はそのまま通すので、両腕とも同じ
+ * 負の値を入れておけば反転しても正しく曲がったままになる。
+ */
+function elbow(deg: number): Rot {
+  return [-Math.abs(deg), 0, 0];
+}
+
+/**
+ * 左右の肘の曲げをまとめて作る。`inward` を足すと前腕が体の内側へ寄る。
+ *
+ * 肘を前へ曲げるだけだと、手拍子や腕クロスのように「手を体の中心へ
+ * 持ってくる」振りが成立しない（前腕が上を向いてしまう）。
+ * 横方向は Z で、左腕は + が外なので内寄せは符号を反転する。
+ * 戻り値は [左, 右] で、`arms()` にそのまま展開して渡せる。
+ */
+function elbows(deg: number, inward = 0): [Rot, Rot] {
+  const x = -Math.abs(deg);
+  return [
+    [x, 0, -inward],
+    [x, 0, inward],
+  ];
 }
 
 /**
@@ -207,7 +254,7 @@ export const MOVES: Move[] = [
     energy: 1,
     mirrorable: true,
     keyframes: [
-      kf(0, merge(weight(1), arms([0, 0, 16], [0, 0, -16], [0, 0, 0], [0, 0, 0]))),
+      kf(0, merge(weight(1), arms([0, 0, 16], [0, 0, -16]))),
       kf(1, merge(weight(1), { root: { z: 0.05 }, j: { thighR: [-26, 0, 6], shinR: [22, 0, 0] } })),
       kf(2, merge(weight(-1), { root: { z: 0.05 }, j: { thighL: [-22, 0, -6], shinL: [18, 0, 0] } })),
       kf(3, merge(weight(-1), { root: { z: -0.03 }, j: { thighR: [16, 0, 6], shinR: [24, 0, 0] } })),
@@ -226,7 +273,7 @@ export const MOVES: Move[] = [
     keyframes: [
       kf(0, merge(weight(0.6), arms([0, 0, 10], [0, 0, -10]))),
       kf(2, merge(weight(0.6), arms([-10, 0, 88], [-10, 0, -88]))),
-      kf(4, merge(weight(-0.6), arms([-20, 0, 30], [-20, 0, -30], [0, -40, 0], [0, 40, 0]))),
+      kf(4, merge(weight(-0.6), arms([-20, 0, 30], [-20, 0, -30], elbow(40), elbow(40)))),
       kf(6, merge(weight(-0.6), arms([-10, 0, 88], [-10, 0, -88]))),
       kf(8, merge(weight(0.6), arms([0, 0, 10], [0, 0, -10]))),
     ],
@@ -272,14 +319,14 @@ export const MOVES: Move[] = [
     energy: 1,
     mirrorable: false,
     keyframes: [
-      kf(0, merge(weight(0.5), arms([-60, 0, 26], [-60, 0, -26], [0, -50, 0], [0, 50, 0]))),
-      kf(1, merge(weight(-0.5), arms([-70, 0, 12], [-70, 0, -12], [0, -70, 0], [0, 70, 0]))),
-      kf(2, merge(weight(0.5), arms([-40, 0, 60], [-40, 0, -60], [0, -30, 0], [0, 30, 0]))),
-      kf(3, merge(weight(-0.5), arms([-70, 0, 12], [-70, 0, -12], [0, -70, 0], [0, 70, 0]))),
-      kf(4, merge(weight(0.5), arms([-100, 0, 20], [-100, 0, -20], [0, -60, 0], [0, 60, 0]))),
-      kf(5, merge(weight(-0.5), arms([-70, 0, 12], [-70, 0, -12], [0, -70, 0], [0, 70, 0]))),
-      kf(6, merge(weight(0.5), arms([-40, 0, 60], [-40, 0, -60], [0, -30, 0], [0, 30, 0]))),
-      kf(8, merge(weight(-0.5), arms([-70, 0, 12], [-70, 0, -12], [0, -70, 0], [0, 70, 0]))),
+      kf(0, merge(weight(0.5), arms([-34, 0, 26], [-34, 0, -26], ...elbows(56, 34)))),
+      kf(1, merge(weight(-0.5), arms([-44, 0, 12], [-44, 0, -12], ...elbows(76, 46)))),
+      kf(2, merge(weight(0.5), arms([-24, 0, 56], [-24, 0, -56], ...elbows(34, 18)))),
+      kf(3, merge(weight(-0.5), arms([-44, 0, 12], [-44, 0, -12], ...elbows(76, 46)))),
+      kf(4, merge(weight(0.5), arms([-62, 0, 20], [-62, 0, -20], ...elbows(66, 38)))),
+      kf(5, merge(weight(-0.5), arms([-44, 0, 12], [-44, 0, -12], ...elbows(76, 46)))),
+      kf(6, merge(weight(0.5), arms([-24, 0, 56], [-24, 0, -56], ...elbows(34, 18)))),
+      kf(8, merge(weight(-0.5), arms([-44, 0, 12], [-44, 0, -12], ...elbows(76, 46)))),
     ],
   },
   {
@@ -317,13 +364,13 @@ export const MOVES: Move[] = [
     energy: 2,
     mirrorable: true,
     keyframes: [
-      kf(0, merge(weight(0.2), { j: { thighL: [-40, 0, 2], shinL: [46, 0, 0], thighR: [16, 0, -2], shinR: [16, 0, 0], upperArmL: [26, 0, 12], upperArmR: [-30, 0, -12], forearmR: [-50, 0, 0] } })),
+      kf(0, merge(weight(0.2), { j: { thighL: [-40, 0, 2], shinL: [46, 0, 0], thighR: [16, 0, -2], shinR: [16, 0, 0], upperArmL: [26, 0, 12], upperArmR: [-30, 0, -12], forearmR: elbow(50) } })),
       kf(1, merge(weight(0.2), { root: { y: HIP_HEIGHT - 0.06 }, j: { thighL: [6, 0, 2], shinL: [24, 0, 0], thighR: [-10, 0, -2], shinR: [30, 0, 0], upperArmL: [0, 0, 12], upperArmR: [0, 0, -12] } })),
-      kf(2, merge(weight(-0.2), { j: { thighR: [-40, 0, -2], shinR: [46, 0, 0], thighL: [16, 0, 2], shinL: [16, 0, 0], upperArmR: [26, 0, -12], upperArmL: [-30, 0, 12], forearmL: [50, 0, 0] } })),
+      kf(2, merge(weight(-0.2), { j: { thighR: [-40, 0, -2], shinR: [46, 0, 0], thighL: [16, 0, 2], shinL: [16, 0, 0], upperArmR: [26, 0, -12], upperArmL: [-30, 0, 12], forearmL: elbow(50) } })),
       kf(3, merge(weight(-0.2), { root: { y: HIP_HEIGHT - 0.06 }, j: { thighR: [6, 0, -2], shinR: [24, 0, 0], thighL: [-10, 0, 2], shinL: [30, 0, 0], upperArmL: [0, 0, 12], upperArmR: [0, 0, -12] } })),
-      kf(4, merge(weight(0.2), { j: { thighL: [-40, 0, 2], shinL: [46, 0, 0], thighR: [16, 0, -2], shinR: [16, 0, 0], upperArmL: [26, 0, 12], upperArmR: [-30, 0, -12], forearmR: [-50, 0, 0] } })),
+      kf(4, merge(weight(0.2), { j: { thighL: [-40, 0, 2], shinL: [46, 0, 0], thighR: [16, 0, -2], shinR: [16, 0, 0], upperArmL: [26, 0, 12], upperArmR: [-30, 0, -12], forearmR: elbow(50) } })),
       kf(5, merge(weight(0.2), { root: { y: HIP_HEIGHT - 0.06 }, j: { thighL: [6, 0, 2], shinL: [24, 0, 0], thighR: [-10, 0, -2], shinR: [30, 0, 0] } })),
-      kf(6, merge(weight(-0.2), { j: { thighR: [-40, 0, -2], shinR: [46, 0, 0], thighL: [16, 0, 2], shinL: [16, 0, 0], upperArmR: [26, 0, -12], upperArmL: [-30, 0, 12], forearmL: [50, 0, 0] } })),
+      kf(6, merge(weight(-0.2), { j: { thighR: [-40, 0, -2], shinR: [46, 0, 0], thighL: [16, 0, 2], shinL: [16, 0, 0], upperArmR: [26, 0, -12], upperArmL: [-30, 0, 12], forearmL: elbow(50) } })),
       kf(8, merge(weight(0.2), { j: { thighL: [-40, 0, 2], shinL: [46, 0, 0], thighR: [16, 0, -2], shinR: [16, 0, 0] } })),
     ],
   },
@@ -351,7 +398,7 @@ export const MOVES: Move[] = [
     energy: 2,
     mirrorable: true,
     keyframes: [
-      kf(0, { root: { y: HIP_HEIGHT - 0.16 }, j: { thighL: [-34, 0, 6], shinL: [66, 0, 0], thighR: [-34, 0, -6], shinR: [66, 0, 0], spine: [-16, 0, 0], upperArmL: [-30, 0, 24], upperArmR: [-30, 0, -24], forearmL: [0, -60, 0], forearmR: [0, 60, 0] } }),
+      kf(0, { root: { y: HIP_HEIGHT - 0.16 }, j: { thighL: [-34, 0, 6], shinL: [66, 0, 0], thighR: [-34, 0, -6], shinR: [66, 0, 0], spine: [-16, 0, 0], upperArmL: [-30, 0, 24], upperArmR: [-30, 0, -24], forearmL: elbow(60), forearmR: elbow(60) } }),
       kf(1, { root: { y: HIP_HEIGHT + 0.05 }, j: { upperArmL: [0, 0, 150], upperArmR: [0, 0, -150], thighL: [0, 0, 4], thighR: [0, 0, -4], footL: [-20, 0, 0], footR: [-20, 0, 0] } }),
       kf(2, { root: { y: HIP_HEIGHT - 0.1 }, j: { thighL: [-24, 0, 6], shinL: [46, 0, 0], thighR: [-24, 0, -6], shinR: [46, 0, 0], spine: [-10, 0, 0], upperArmL: [-20, 0, 40], upperArmR: [-20, 0, -40] } }),
       kf(3, merge(weight(0.5), arms([0, 0, 20], [0, 0, -20]))),
@@ -385,14 +432,14 @@ export const MOVES: Move[] = [
     energy: 2,
     mirrorable: true,
     keyframes: [
-      kf(0, merge(weight(0.6), { j: { upperArmL: [-40, 0, 30], forearmL: [0, -110, 0], upperArmR: [-40, 0, -30], forearmR: [0, 110, 0] } })),
-      kf(1, merge(weight(0.6), { j: { upperArmL: [0, 0, 168], upperArmR: [-40, 0, -30], forearmR: [0, 110, 0], head: [-10, 0, 0] } })),
-      kf(2, merge(weight(-0.6), { j: { upperArmL: [-40, 0, 30], forearmL: [0, -110, 0], upperArmR: [0, 0, -168], head: [-10, 0, 0] } })),
-      kf(3, merge(weight(-0.6), { j: { upperArmL: [-40, 0, 30], forearmL: [0, -110, 0], upperArmR: [-40, 0, -30], forearmR: [0, 110, 0] } })),
+      kf(0, merge(weight(0.6), { j: { upperArmL: [-40, 0, 30], forearmL: elbow(110), upperArmR: [-40, 0, -30], forearmR: elbow(110) } })),
+      kf(1, merge(weight(0.6), { j: { upperArmL: [0, 0, 168], upperArmR: [-40, 0, -30], forearmR: elbow(110), head: [-10, 0, 0] } })),
+      kf(2, merge(weight(-0.6), { j: { upperArmL: [-40, 0, 30], forearmL: elbow(110), upperArmR: [0, 0, -168], head: [-10, 0, 0] } })),
+      kf(3, merge(weight(-0.6), { j: { upperArmL: [-40, 0, 30], forearmL: elbow(110), upperArmR: [-40, 0, -30], forearmR: elbow(110) } })),
       kf(4, merge(weight(0.6), { j: { upperArmL: [0, 0, 168], upperArmR: [0, 0, -168], spine: [-8, 0, 0] } })),
-      kf(5, merge(weight(0.6), { j: { upperArmL: [-40, 0, 30], forearmL: [0, -110, 0], upperArmR: [-40, 0, -30], forearmR: [0, 110, 0] } })),
+      kf(5, merge(weight(0.6), { j: { upperArmL: [-40, 0, 30], forearmL: elbow(110), upperArmR: [-40, 0, -30], forearmR: elbow(110) } })),
       kf(6, merge(weight(-0.6), { j: { upperArmL: [0, 0, 168], upperArmR: [0, 0, -168], spine: [-8, 0, 0] } })),
-      kf(8, merge(weight(-0.6), { j: { upperArmL: [-40, 0, 30], forearmL: [0, -110, 0], upperArmR: [-40, 0, -30], forearmR: [0, 110, 0] } })),
+      kf(8, merge(weight(-0.6), { j: { upperArmL: [-40, 0, 30], forearmL: elbow(110), upperArmR: [-40, 0, -30], forearmR: elbow(110) } })),
     ],
   },
   {
@@ -405,8 +452,8 @@ export const MOVES: Move[] = [
     keyframes: [
       kf(0, merge(weight(0.6), arms([0, 0, 14], [0, 0, -14]))),
       kf(1, merge(weight(0.6), arms([-30, 0, 80], [-30, 0, -80]))),
-      kf(2, merge(weight(-0.8), { j: { upperArmL: [-80, 0, -20], forearmL: [0, -60, 0], upperArmR: [-80, 0, 20], forearmR: [0, 60, 0], chest: [0, 0, -8], head: [6, 0, -6] } })),
-      kf(4, merge(weight(-0.8), { j: { upperArmL: [-80, 0, -20], forearmL: [0, -60, 0], upperArmR: [-80, 0, 20], forearmR: [0, 60, 0], chest: [0, 0, -8], head: [6, 0, -6] } }), "hold"),
+      kf(2, merge(weight(-0.8), { j: { upperArmL: [-80, 0, -20], forearmL: elbows(64, 52)[0], upperArmR: [-80, 0, 20], forearmR: elbows(64, 52)[1], chest: [0, 0, -8], head: [6, 0, -6] } })),
+      kf(4, merge(weight(-0.8), { j: { upperArmL: [-80, 0, -20], forearmL: elbows(64, 52)[0], upperArmR: [-80, 0, 20], forearmR: elbows(64, 52)[1], chest: [0, 0, -8], head: [6, 0, -6] } }), "hold"),
       kf(5, merge(weight(0.6), arms([-20, 0, 60], [-20, 0, -60]))),
       kf(6, merge(weight(0.6), arms([0, 0, 14], [0, 0, -14]))),
       kf(8, merge(weight(-0.6), arms([0, 0, 14], [0, 0, -14]))),
@@ -422,9 +469,9 @@ export const MOVES: Move[] = [
     keyframes: [
       kf(0, merge(weight(0.5), arms([0, 0, 16], [0, 0, -16]))),
       kf(1, { root: { y: HIP_HEIGHT - 0.1 }, j: { thighL: [-26, 0, 8], shinL: [48, 0, 0], thighR: [-26, 0, -8], shinR: [48, 0, 0], spine: [-12, 0, 0], upperArmL: [-30, 0, 30], upperArmR: [-30, 0, -30] } }),
-      kf(2, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: [0, 60, 0], chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }),
-      kf(4, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: [0, 60, 0], chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
-      kf(6, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: [0, 60, 0], chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
+      kf(2, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }),
+      kf(4, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
+      kf(6, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
       kf(8, merge(weight(0.5), arms([0, 0, 16], [0, 0, -16]))),
     ],
   },

@@ -186,6 +186,65 @@ const CHAIN_TIERS: Array<{ steps: number; joints: JointName[] }> = [
 /** 段ひとつぶんの遅れ（カウント）。最大でも 4 段なので全体で 0.2 カウント。 */
 const CHAIN_STEP = 0.05;
 
+/**
+ * 肘がロックアウトしない量（度）。
+ *
+ * 人は腕を上げるとき、肘を完全に伸ばし切らない。伸び切った腕は「棒」に
+ * 見えるので、腕を上げた分だけわずかに緩める。バウンスが「腰を沈めた分だけ
+ * 膝を曲げる」のと同じ層の処理。
+ */
+const ELBOW_SOFT_MAX = 14;
+
+/**
+ * 腕を下ろしていても残る最低限の曲がり（度）。
+ *
+ * 上腕だけを書いたキーフレームは前腕を持たないので、これが無いと
+ * そこだけ肘が伸び切る。脱力した腕も真っ直ぐにはならない。
+ */
+const ELBOW_BASE = 8;
+
+/**
+ * これ以上曲げてあるパーツには手を出さない（度）。
+ *
+ * 振り付け側が意図して曲げているときに上から足すと、狙った形が崩れる。
+ * 境目で角度が飛ばないよう、しきい値へ向けて滑らかに 0 にする。
+ */
+const ELBOW_AUTHORED = 20;
+
+/**
+ * 上腕を上げた分だけ肘を緩める。
+ *
+ * 肘の曲がりに効くのは X（前後）と Z（横）だけで、Y は前腕の軸まわりの
+ * ひねりなので見た目が変わらない。振り付け側がここを取り違えていて、
+ * 肘を曲げたつもりの指定が長らく効いていなかった（moves.ts の elbow() を参照）。
+ */
+function softenElbows(pose: Pose): Pose {
+  const j: Partial<Record<JointName, Rot>> = { ...pose.j };
+  let touched = false;
+
+  for (const [foreName, upperName] of [
+    ["forearmL", "upperArmL"],
+    ["forearmR", "upperArmR"],
+  ] as Array<[JointName, JointName]>) {
+    const fore = j[foreName] ?? [0, 0, 0];
+
+    // 既に曲げてあるほど効かなくする。しきい値で完全に手を引く
+    const flex = Math.hypot(fore[0], fore[2]);
+    const damp = Math.max(0, 1 - flex / ELBOW_AUTHORED);
+    if (damp <= 0) continue;
+
+    const upper = j[upperName] ?? [0, 0, 0];
+    const lift = Math.min(1, Math.hypot(upper[0], upper[2]) / 120);
+    // 下ろしていても ELBOW_BASE、上げるほど ELBOW_SOFT_MAX に近づく
+    const want = ELBOW_BASE + (ELBOW_SOFT_MAX - ELBOW_BASE) * lift;
+
+    j[foreName] = [fore[0] - want * damp, fore[1], fore[2]];
+    touched = true;
+  }
+
+  return touched ? { root: pose.root, j } : pose;
+}
+
 export interface SampleOptions {
   /** 上下動の強さ 0..1。 */
   bounce: number;
@@ -274,7 +333,7 @@ export function samplePose(
 
   const total = choreo.totalCounts;
   const pos = wrap(countPos, total);
-  const pose = chainedPose(choreo, pos, total, opts.chain ?? 0);
+  const pose = softenElbows(chainedPose(choreo, pos, total, opts.chain ?? 0));
 
   return applyBounce(pose, pos - Math.floor(pos), opts.bounce);
 }
