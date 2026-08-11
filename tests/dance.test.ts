@@ -147,11 +147,16 @@ describe("振り付けの生成", () => {
     }
   });
 
-  it("端数が短すぎるときは手前のブロックにまとめる", () => {
-    // 17 拍 = 8 + 8 + 1。1カウントのブロックは振りとして成立しない
+  it("スロットは1小節（4カウント）刻み", () => {
+    const layout = blockLayout(16);
+    expect(layout.map((s) => s.counts)).toEqual([4, 4, 4, 4]);
+  });
+
+  it("端数が短すぎるときは手前のスロットにまとめる", () => {
+    // 17 拍 = 4+4+4+4+1。1カウントのスロットは振りとして成立しない
     const layout = blockLayout(17);
-    expect(layout).toHaveLength(2);
-    expect(layout[1].counts).toBe(9);
+    expect(layout).toHaveLength(4);
+    expect(layout[3].counts).toBe(5);
   });
 
   it("同じシードなら必ず同じ振り付けになる", () => {
@@ -183,10 +188,37 @@ describe("振り付けの生成", () => {
   });
 
   it("ループの最後はキメで締める", () => {
-    for (let seed = 1; seed <= 20; seed++) {
-      const blocks = generateChoreography(32, settings({ seed })).blocks;
-      expect(getMove(blocks[blocks.length - 1].moveId)?.accent).toBe(true);
+    // 長さも変えて確かめる。2スロット使う振りが最後のスロットまで食い込むと
+    // 締めが消えるので、スロット数が奇数・偶数の両方を通す
+    for (const beats of [12, 16, 20, 24, 32, 48]) {
+      for (let seed = 1; seed <= 60; seed++) {
+        const blocks = generateChoreography(beats, settings({ seed })).blocks;
+        if (blocks.length < 2) continue;
+        expect(getMove(blocks[blocks.length - 1].moveId)?.accent).toBe(true);
+      }
     }
+  });
+
+  it("キメが1種類に偏らない", () => {
+    // 動きの大きさで絞ると、一番大きいキメだけが毎回出てくる
+    const used = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const blocks = generateChoreography(32, settings({ seed })).blocks;
+      used.add(blocks[blocks.length - 1].moveId);
+    }
+    expect(used.size).toBeGreaterThan(2);
+  });
+
+  it("1ループの中で振りが十分に入れ替わる", () => {
+    // 8カウント単位だった頃は 8小節で 4ブロックしかなく、しかもその半分が
+    // 直前の左右反転だったので、実質2〜3種類しか出てこなかった
+    let distinct = 0;
+    const seeds = 40;
+    for (let seed = 1; seed <= seeds; seed++) {
+      const blocks = generateChoreography(32, settings({ seed })).blocks;
+      distinct += new Set(blocks.map((b) => b.moveId)).size;
+    }
+    expect(distinct / seeds).toBeGreaterThan(5);
   });
 
   it("盛り上がりを上げると動きの大きいパーツが増える", () => {
@@ -202,13 +234,16 @@ describe("振り付けの生成", () => {
     expect(total(1)).toBeGreaterThan(total(0));
   });
 
-  it("手で選んだブロックはシードを変えても残る", () => {
+  it("手で選んだ小節はシードを変えても残る", () => {
+    // 指定はスロット番号で覚える。ブロックの長さは振りによって変わるので、
+    // 並び順で覚えると引き直したときに別の小節へずれてしまう
     const base = withOverride(settings({ seed: 1 }), 2, { moveId: "wave", mirrored: true });
     for (const seed of [1, 2, 99, 12345]) {
       const blocks = generateChoreography(32, { ...base, seed }).blocks;
-      expect(blocks[2].moveId).toBe("wave");
-      expect(blocks[2].mirrored).toBe(true);
-      expect(blocks[2].manual).toBe(true);
+      const picked = blocks.find((b) => b.slot === 2);
+      expect(picked?.moveId).toBe("wave");
+      expect(picked?.mirrored).toBe(true);
+      expect(picked?.manual).toBe(true);
     }
   });
 
@@ -216,7 +251,8 @@ describe("振り付けの生成", () => {
     const withPick = withOverride(settings(), 1, { moveId: "clap", mirrored: false });
     const cleared = withOverride(withPick, 1, null);
     expect(cleared.overrides).toEqual([]);
-    expect(generateChoreography(32, cleared).blocks[1].manual).toBe(false);
+    const blocks = generateChoreography(32, cleared).blocks;
+    expect(blocks.find((b) => b.slot === 1)?.manual).toBe(false);
   });
 });
 
@@ -337,7 +373,7 @@ describe("ポーズの取り出し", () => {
     const broken = {
       seed: 1,
       totalCounts: 8,
-      blocks: [{ startCount: 0, counts: 8, moveId: "無い技", mirrored: false, manual: true }],
+      blocks: [{ startCount: 0, counts: 8, moveId: "無い技", mirrored: false, manual: true, slot: 0 }],
     };
     expect(() => sampleSkeleton(broken, 3)).not.toThrow();
   });
@@ -439,8 +475,8 @@ describe("キレ（止めと連鎖）", () => {
 
     const accent = choreo.blocks.find((b) => getMove(b.moveId)?.accent);
     expect(accent).toBeDefined();
-    // 締めが丸まっていると、ここが 1拍を割る
-    expect(still(accent!.startCount, accent!.startCount + accent!.counts)).toBeGreaterThan(1.5);
+    // キメは1小節（4カウント）。締めが丸まっていると、ここが 1拍を割る
+    expect(still(accent!.startCount, accent!.startCount + accent!.counts)).toBeGreaterThan(1);
   });
 
   it("バウンスは沈むほうが速い（浮いて見えないため）", () => {

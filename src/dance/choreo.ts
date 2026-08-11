@@ -28,6 +28,12 @@ export interface ChoreoBlock {
   mirrored: boolean;
   /** ユーザーが手で選んだブロックか。 */
   manual: boolean;
+  /**
+   * このブロックが始まるスロット番号（1小節＝1スロット）。
+   * 手動指定はこの番号で覚える。ブロックの長さは振りによって変わるので、
+   * 並び順で覚えるとシードを引き直したときに指定がずれてしまう。
+   */
+  slot: number;
 }
 
 export interface Choreography {
@@ -81,8 +87,17 @@ export const DEFAULT_DANCE: DanceSettings = {
   overrides: [],
 };
 
-/** 1ブロックの標準の長さ。ダンスの数え方に合わせて8カウント。 */
-export const BLOCK_COUNTS = 8;
+/**
+ * 振りを差し替える最小単位（カウント）。4/4 なら1小節。
+ *
+ * 以前は 8カウント（2小節）だったが、それだと同じ振りが2小節続くうえ、
+ * 「次はその左右反転が来る」と読めてしまって単調になる。1小節ごとに
+ * 変えられるようにして、8カウント必要な振りだけ2スロットを使う。
+ */
+export const SLOT_COUNTS = 4;
+
+/** 後方互換のための別名。 */
+export const BLOCK_COUNTS = SLOT_COUNTS;
 
 /** 決定的な擬似乱数（mulberry32）。同じシードなら必ず同じ列になる。 */
 function rng(seed: number): () => number {
@@ -104,8 +119,8 @@ function rng(seed: number): () => number {
 export function blockLayout(totalCounts: number): Array<{ startCount: number; counts: number }> {
   const total = Math.max(1, Math.round(totalCounts));
   const out: Array<{ startCount: number; counts: number }> = [];
-  for (let start = 0; start < total; start += BLOCK_COUNTS) {
-    out.push({ startCount: start, counts: Math.min(BLOCK_COUNTS, total - start) });
+  for (let start = 0; start < total; start += SLOT_COUNTS) {
+    out.push({ startCount: start, counts: Math.min(SLOT_COUNTS, total - start) });
   }
   if (out.length >= 2 && out[out.length - 1].counts < 2) {
     const tail = out.pop();
@@ -138,75 +153,160 @@ function energyLevel(value: number): 0 | 1 | 2 {
 
 /**
  * 目標の段階に合うパーツを選ぶ。
- * ぴったりが無ければ隣の段階まで広げる。
+ *
+ * ぴったりが無ければ隣の段階まで広げる。直近に使った振りは避ける。
+ * 避けるのを直前1つだけにしていた頃は、数小節おきに同じ振りが戻ってきて
+ * 「次に何が来るか」が読めてしまっていた。
  */
 function pickMove(
   level: 0 | 1 | 2,
-  opts: { accent: boolean; avoid: string | null; random: () => number },
+  opts: {
+    accent: boolean;
+    recent: string[];
+    maxCounts: number;
+    random: () => number;
+  },
 ): Move {
-  const wants = (m: Move): boolean => (opts.accent ? m.accent === true : m.accent !== true);
+  const fits = (m: Move): boolean =>
+    (opts.accent ? m.accent === true : m.accent !== true) && m.counts <= opts.maxCounts;
 
-  for (const spread of [0, 1, 2]) {
-    const pool = MOVES.filter(
-      (m) => wants(m) && Math.abs(m.energy - level) <= spread && m.id !== opts.avoid,
-    );
-    if (pool.length > 0) return pool[Math.floor(opts.random() * pool.length) % pool.length];
+  // キメは動きの大きさで絞らない。締めの振りはどれも「締めるためのもの」で、
+  // energy で選ぶと一番大きい1つだけが毎回出てきてしまう
+  const spreads = opts.accent ? [2] : [0, 1, 2];
+
+  // 避ける範囲を狭めながら探す。候補が尽きるより、少し繰り返すほうがまし
+  for (const memory of [opts.recent.length, 2, 1, 0]) {
+    const avoid = new Set(opts.recent.slice(-memory));
+    for (const spread of spreads) {
+      const pool = MOVES.filter(
+        (m) => fits(m) && Math.abs(m.energy - level) <= spread && !avoid.has(m.id),
+      );
+      if (pool.length > 0) return pool[Math.floor(opts.random() * pool.length) % pool.length];
+    }
   }
   // キメが1つも無いなど、どうしても見つからない場合の保険
-  const fallback = MOVES.filter((m) => m.id !== opts.avoid);
-  const pool = fallback.length > 0 ? fallback : MOVES;
-  return pool[Math.floor(opts.random() * pool.length) % pool.length];
+  const pool = MOVES.filter(fits);
+  return (pool.length > 0 ? pool : MOVES)[
+    Math.floor(opts.random() * (pool.length > 0 ? pool.length : MOVES.length))
+  ];
+}
+
+/** 直近に使った振りを何個まで覚えて避けるか。 */
+const RECENT_MEMORY = 3;
+
+/**
+ * 同じ振りを左右反転して次の小節で繰り返す確率。
+ *
+ * 高いほど「振り付けらしい」形になるが、高すぎると次が読めて退屈になる。
+ * 8カウント単位だった頃は 0.65 だった。1小節単位ではこの繰り返しが
+ * 倍の頻度で来るので、下げてある。
+ */
+const MIRROR_REPEAT = 0.32;
+
+/**
+ * i 番目のスロットから moveCounts ぶんを賄うのに要るスロット数。
+ * 足りなければ 0。
+ */
+function slotsNeeded(
+  layout: Array<{ counts: number }>,
+  i: number,
+  moveCounts: number,
+): number {
+  let acc = 0;
+  let n = 0;
+  while (i + n < layout.length && acc < moveCounts) {
+    acc += layout[i + n].counts;
+    n++;
+  }
+  return acc >= moveCounts ? n : 0;
 }
 
 /**
  * 振り付けを生成する。
  *
- * overrides に入っているブロックはそのまま採用し、残りだけ自動で埋める。
- * 手で直したブロックが、シードを引き直しても残るようにするため。
+ * overrides はスロット番号（1小節）で覚える。ブロックの長さは選ばれた振りに
+ * よって変わるので、並び順で覚えるとシードを引き直したときに指定がずれる。
  */
 export function generateChoreography(totalCounts: number, settings: DanceSettings): Choreography {
   const layout = blockLayout(totalCounts);
   const random = rng(settings.seed);
   const blocks: ChoreoBlock[] = [];
 
-  let prevId: string | null = null;
-  /** 直前のブロックを反転して繰り返せる状態か。 */
+  const recent: string[] = [];
+  /** 直前の振りを反転して繰り返す予約。 */
   let pendingMirror: { moveId: string; mirrored: boolean } | null = null;
 
-  for (let i = 0; i < layout.length; i++) {
-    const slot = layout[i];
+  const remember = (id: string): void => {
+    recent.push(id);
+    if (recent.length > RECENT_MEMORY) recent.shift();
+  };
+
+  /** 選んだ振りをブロックとして置き、消費したスロット数を返す。 */
+  const place = (
+    i: number,
+    moveId: string,
+    mirrored: boolean,
+    manual: boolean,
+    span: number,
+  ): number => {
+    let counts = 0;
+    for (let k = 0; k < span; k++) counts += layout[i + k].counts;
+    blocks.push({
+      startCount: layout[i].startCount,
+      counts,
+      moveId,
+      mirrored,
+      manual,
+      slot: i,
+    });
+    remember(moveId);
+    return span;
+  };
+
+  for (let i = 0; i < layout.length; ) {
+    // 最後のスロットはキメで締める（1スロットしかない場合は普通の振りのまま）
+    const isLastSlot = i === layout.length - 1;
     const override = settings.overrides[i];
-    const isLast = i === layout.length - 1;
 
     if (override && hasMove(override.moveId)) {
-      blocks.push({ ...slot, moveId: override.moveId, mirrored: override.mirrored, manual: true });
-      prevId = override.moveId;
+      const move = getMove(override.moveId)!;
+      const span = Math.max(1, slotsNeeded(layout, i, move.counts));
+      i += place(i, move.id, override.mirrored, true, span);
       pendingMirror = null;
       continue;
     }
 
-    // 2つ1組の後半。前半と同じ振りを左右反転して繰り返すと、振り付けらしい形になる
     if (pendingMirror) {
-      blocks.push({ ...slot, ...pendingMirror, manual: false });
-      prevId = pendingMirror.moveId;
+      const move = getMove(pendingMirror.moveId);
+      const span = move ? Math.max(1, slotsNeeded(layout, i, move.counts)) : 1;
+      i += place(i, pendingMirror.moveId, pendingMirror.mirrored, false, span);
       pendingMirror = null;
       continue;
     }
 
     const position = layout.length === 1 ? 1 : i / (layout.length - 1);
     const level = energyLevel(energyCurve(position, settings.intensity));
-    // 最後のブロックはキメで締める（1ブロックしかない場合は普通の振りのまま）
-    const accent = isLast && layout.length > 1;
-    const move = pickMove(level, { accent, avoid: prevId, random });
+    const accent = isLastSlot && layout.length > 1;
+
+    // 長い振りは、最後のキメ用スロットを食い潰さない範囲でだけ許す
+    const slotsLeft = layout.length - i;
+    const reserve = accent ? 0 : 1;
+    let maxCounts = 0;
+    for (let k = 0; k < slotsLeft - reserve; k++) maxCounts += layout[i + k].counts;
+    maxCounts = Math.max(layout[i].counts, maxCounts);
+
+    const move = pickMove(level, { accent, recent, maxCounts, random });
     const mirrored = move.mirrorable && random() < 0.5;
+    const span = Math.max(1, slotsNeeded(layout, i, move.counts));
+    i += place(i, move.id, mirrored, false, span);
 
-    blocks.push({ ...slot, moveId: move.id, mirrored, manual: false });
-    prevId = move.id;
-
-    // 次のブロックも自動で、かつ最後の1つ手前でなければ、反転の繰り返しを予約する
-    const nextIsFree = i + 1 < layout.length && !settings.overrides[i + 1];
-    const nextIsLast = i + 1 === layout.length - 1;
-    if (nextIsFree && !nextIsLast && move.mirrorable && random() < 0.65) {
+    // 次のスロットも自動で、かつ繰り返しても最後（キメ）のスロットを
+    // 食い潰さないときだけ、反転の繰り返しを予約する。
+    // 2スロット使う振りを繰り返すと締めのスロットまで届いてしまう
+    const nextIsFree = i < layout.length && !settings.overrides[i];
+    const repeatSpan = Math.max(1, slotsNeeded(layout, i, move.counts));
+    const leavesAccentSlot = i + repeatSpan <= layout.length - 1;
+    if (nextIsFree && leavesAccentSlot && move.mirrorable && random() < MIRROR_REPEAT) {
       pendingMirror = { moveId: move.id, mirrored: !mirrored };
     }
   }

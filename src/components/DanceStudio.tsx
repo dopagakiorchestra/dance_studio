@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { blockLabel, generateChoreography, withOverride, type DanceSettings } from "../dance/choreo";
-import { MOVES } from "../dance/moves";
+import { MOVES, type Mood } from "../dance/moves";
 import { createStage, drawFrame, getPalette, PALETTES } from "../dance/render";
 import { sampleSkeleton } from "../dance/sampler";
 import {
@@ -42,6 +42,14 @@ export interface DanceStudioProps {
   /** 再生中のループ内の拍位置。止まっていれば null。 */
   playPosition: number | null;
 }
+
+/** 一覧の並べ分け。未指定の振りは「基本」に入る。 */
+const MOOD_GROUPS: Array<{ mood: Mood | undefined; label: string }> = [
+  { mood: undefined, label: "基本" },
+  { mood: "cool", label: "かっこいい" },
+  { mood: "sultry", label: "妖艶" },
+  { mood: "cute", label: "かわいい" },
+];
 
 /** プレビューの表示上の最大の高さ（CSS ピクセル）。 */
 const PREVIEW_MAX_HEIGHT = 400;
@@ -221,7 +229,6 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
     return () => abortRef.current?.abort();
   }, []);
 
-  const barsPerBlock = 8 / project.beatsPerBar;
 
   return (
     <>
@@ -359,13 +366,13 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
       <section className="panel">
         <h2>振り付けの中身</h2>
         <p className="hint">
-          8カウント（{barsPerBlock === 1 ? "1小節" : `${barsPerBlock}小節`}
-          ）ごとのブロックです。気に入らないところだけ差し替えられます。
-          手で選んだブロックは、引き直してもそのまま残ります。
+          1小節ごとに振りを差し替えられます。気に入らないところだけ選び直してください。
+          手で選んだ小節は、引き直してもそのまま残ります。
+          「ボックスステップ」と「半回転」だけは2小節ぶん使います。
         </p>
         <ol className="dance-blocks">
-          {choreo.blocks.map((block, index) => (
-            <li key={index} className={block.manual ? "manual" : undefined}>
+          {choreo.blocks.map((block) => (
+            <li key={block.slot} className={block.manual ? "manual" : undefined}>
               <span className="dance-block-range">
                 {Math.floor(block.startCount / project.beatsPerBar) + 1}–
                 {Math.floor((block.startCount + block.counts - 0.001) / project.beatsPerBar) + 1}
@@ -378,7 +385,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
                   onChange(
                     withOverride(
                       dance,
-                      index,
+                      block.slot,
                       value === "auto" ? null : { moveId: value, mirrored: block.mirrored },
                     ),
                   );
@@ -386,11 +393,19 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
               >
                 {/* 手動のときは「自動なら何が来るか」が分からないので名前を出さない */}
                 <option value="auto">{block.manual ? "自動" : `自動（${blockLabel(block)}）`}</option>
-                {MOVES.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
+                {MOOD_GROUPS.map(({ mood, label }) => {
+                  const group = MOVES.filter((m) => m.mood === mood);
+                  if (group.length === 0) return null;
+                  return (
+                    <optgroup key={label} label={label}>
+                      {group.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </select>
               <label className="checkline">
                 <input
@@ -398,7 +413,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
                   checked={block.mirrored}
                   onChange={(e) =>
                     onChange(
-                      withOverride(dance, index, {
+                      withOverride(dance, block.slot, {
                         moveId: block.moveId,
                         mirrored: e.target.checked,
                       }),
