@@ -138,12 +138,6 @@ function weight(dir: number, amount = 1): Pose {
   };
 }
 
-/**
- * 腕を下ろした自然な位置。
- * 真下に下ろすと胴のシルエットに溶けて腕が見えなくなるので、しっかり開く。
- */
-const ARMS_DOWN: Pose = arms([0, 0, 17], [0, 0, -17]);
-
 function kf(count: number, pose: Pose, ease?: Ease): MoveKeyframe {
   return ease ? { count, pose, ease } : { count, pose };
 }
@@ -155,46 +149,6 @@ function kf(count: number, pose: Pose, ease?: Ease): MoveKeyframe {
  * mirrorable が true のものは、同じ振りを左右反転して2回目に使える。
  */
 export const MOVES: Move[] = [
-  {
-    id: "sway",
-    name: "体重移動",
-    counts: 4,
-    energy: 0,
-    mirrorable: true,
-    keyframes: [
-      kf(0, merge(weight(1), ARMS_DOWN)),
-      kf(2, merge(weight(-1), ARMS_DOWN)),
-      kf(4, merge(weight(1), ARMS_DOWN)),
-    ],
-  },
-  {
-    id: "stepTouch",
-    name: "ステップタッチ",
-    counts: 4,
-    energy: 0,
-    mirrorable: true,
-    keyframes: [
-      kf(0, merge(weight(1), arms([0, 0, 14], [0, 0, -14]))),
-      kf(1, merge(weight(1), { j: { thighR: [0, 0, 10], shinR: [12, 0, 0] } })),
-      kf(2, merge(weight(-1), arms([0, 0, 14], [0, 0, -14]))),
-      kf(3, merge(weight(-1), { j: { thighL: [0, 0, -10], shinL: [12, 0, 0] } })),
-      kf(4, merge(weight(1), arms([0, 0, 14], [0, 0, -14]))),
-    ],
-  },
-  {
-    id: "heelToe",
-    name: "かかと・つま先",
-    counts: 4,
-    energy: 0,
-    mirrorable: true,
-    keyframes: [
-      kf(0, merge(weight(1), arms([0, 0, 12], [0, 0, -12]))),
-      kf(1, merge(weight(1), { j: { thighR: [-18, 0, 4], shinR: [4, 0, 0], footR: [-24, 0, 0] } })),
-      kf(2, merge(weight(1), { j: { thighR: [6, 0, 4], shinR: [34, 0, 0], footR: [26, 0, 0] } })),
-      kf(3, merge(weight(1), arms([0, 0, 12], [0, 0, -12]))),
-      kf(4, merge(weight(-1), arms([0, 0, 12], [0, 0, -12]))),
-    ],
-  },
   {
     id: "shimmy",
     name: "肩ゆらし",
@@ -235,35 +189,6 @@ export const MOVES: Move[] = [
       kf(2, merge(weight(0.5), { j: { chest: [8, 0, 0], head: [-4, 0, 0] } })),
       kf(3, merge(weight(0.5), { j: { chest: [-18, 0, 0], head: [10, 0, 0], upperArmL: [12, 0, 16], upperArmR: [12, 0, -16] } })),
       kf(4, merge(weight(-0.5), arms([0, 0, 16], [0, 0, -16]))),
-    ],
-  },
-  {
-    id: "boxStep",
-    name: "ボックスステップ",
-    counts: 8,
-    energy: 1,
-    mirrorable: true,
-    keyframes: [
-      kf(0, merge(weight(1), arms([0, 0, 16], [0, 0, -16]))),
-      kf(1, merge(weight(1), { root: { z: 0.05 }, j: { thighR: [-26, 0, 6], shinR: [22, 0, 0] } })),
-      kf(2, merge(weight(-1), { root: { z: 0.05 }, j: { thighL: [-22, 0, -6], shinL: [18, 0, 0] } })),
-      kf(3, merge(weight(-1), { root: { z: -0.03 }, j: { thighR: [16, 0, 6], shinR: [24, 0, 0] } })),
-      kf(4, merge(weight(1), { root: { z: -0.03 }, j: { thighL: [14, 0, -6], shinL: [20, 0, 0] } })),
-      kf(5, merge(weight(1), { root: { z: 0.05 }, j: { thighR: [-26, 0, 6], shinR: [22, 0, 0] } })),
-      kf(6, merge(weight(-1), { root: { z: 0.05 }, j: { thighL: [-22, 0, -6], shinL: [18, 0, 0] } })),
-      kf(8, merge(weight(1), arms([0, 0, 16], [0, 0, -16]))),
-    ],
-  },
-  {
-    id: "armWave",
-    name: "腕を開いて閉じる",
-    counts: 4,
-    energy: 1,
-    mirrorable: true,
-    keyframes: [
-      kf(0, merge(weight(0.6), arms([0, 0, 10], [0, 0, -10]))),
-      kf(2, merge(weight(0.6), arms([-10, 0, 88], [-10, 0, -88]))),
-      kf(4, merge(weight(-0.6), arms([-20, 0, 30], [-20, 0, -30], elbow(40), elbow(40)))),
     ],
   },
   {
@@ -321,18 +246,6 @@ export const MOVES: Move[] = [
     ],
   },
   {
-    id: "reachSky",
-    name: "両手を伸ばす",
-    counts: 4,
-    energy: 1,
-    mirrorable: false,
-    keyframes: [
-      kf(0, merge(weight(0.3), arms([0, 0, 10], [0, 0, -10]))),
-      kf(2, merge(weight(0.3), { j: { upperArmL: [0, 0, 165], upperArmR: [0, 0, -165], spine: [-6, 0, 0], head: [-12, 0, 0] } }), "inout"),
-      kf(4, merge(weight(0.3), { j: { upperArmL: [0, 0, 150], upperArmR: [0, 0, -150], chest: [0, 0, 10], head: [0, 0, -6] } })),
-    ],
-  },
-  {
     id: "runningMan",
     name: "ランニングマン",
     counts: 4,
@@ -348,19 +261,24 @@ export const MOVES: Move[] = [
   },
   {
     id: "turnHalf",
-    name: "半回転",
+    name: "背を向けて戻る",
     counts: 8,
     energy: 2,
     mirrorable: true,
+    mood: "cool",
+    // 回転は必ず始点と同じ向きで終える。
+    // 以前は 360度まで回してから最後のキーフレームで指定が消えていたので、
+    // 1回転したあと逆回転で巻き戻る動きになっていた（実測で確認）。
+    // オイラー角の補間は最短経路を選ばないので、行って戻る形にするしかない。
     keyframes: [
-      kf(0, merge(weight(0.6), arms([0, 0, 14], [0, 0, -14]))),
-      kf(1, merge(weight(0.6), { j: { hips: [0, 30, 0], upperArmL: [-30, 0, 60], upperArmR: [-30, 0, -20] } })),
-      kf(2, { root: { x: 0.02, y: HIP_HEIGHT }, j: { hips: [0, 100, 0], upperArmL: [-20, 0, 70], upperArmR: [-20, 0, -70], thighR: [-14, 0, 0], shinR: [20, 0, 0] } }),
-      kf(3, { root: { y: HIP_HEIGHT }, j: { hips: [0, 180, 0], upperArmL: [0, 0, 20], upperArmR: [0, 0, -20] } }),
-      kf(4, { root: { y: HIP_HEIGHT }, j: { hips: [0, 180, 0], upperArmL: [-40, 0, 30], upperArmR: [-40, 0, -30] } }),
-      kf(5, { root: { y: HIP_HEIGHT }, j: { hips: [0, 260, 0], upperArmL: [-20, 0, 70], upperArmR: [-20, 0, -70], thighL: [-14, 0, 0], shinL: [20, 0, 0] } }),
-      kf(6, { root: { y: HIP_HEIGHT }, j: { hips: [0, 360, 0], upperArmL: [0, 0, 24], upperArmR: [0, 0, -24] } }),
-      kf(8, merge(weight(0.6), arms([0, 0, 14], [0, 0, -14]))),
+      kf(0, merge(weight(0.6), arms([0, 0, 18], [0, 0, -18]))),
+      kf(1, merge(weight(0.6), { j: { hips: [0, 66, 0], upperArmL: [-34, 0, 64], forearmL: elbow(52), upperArmR: [-34, 0, -24], forearmR: elbow(52) } })),
+      kf(2, { root: { x: 0.02, y: HIP_HEIGHT }, j: { hips: [0, 134, 0], upperArmL: [-24, 0, 72], forearmL: elbow(40), upperArmR: [-24, 0, -72], forearmR: elbow(40), thighR: [-14, 0, 0], shinR: [20, 0, 0] } }),
+      kf(3, { root: { y: HIP_HEIGHT }, j: { hips: [0, 180, 0], upperArmL: [-16, 0, 30], forearmL: elbow(64), upperArmR: [-16, 0, -30], forearmR: elbow(64) } }),
+      kf(4, { root: { y: HIP_HEIGHT }, j: { hips: [0, 180, 0], upperArmL: [-16, 0, 30], forearmL: elbow(64), upperArmR: [-16, 0, -30], forearmR: elbow(64) } }, "hold"),
+      kf(5, { root: { y: HIP_HEIGHT }, j: { hips: [0, 134, 0], upperArmL: [-24, 0, 72], forearmL: elbow(40), upperArmR: [-24, 0, -72], forearmR: elbow(40), thighL: [-14, 0, 0], shinL: [20, 0, 0] } }),
+      kf(6, { root: { y: HIP_HEIGHT }, j: { hips: [0, 66, 0], upperArmL: [-34, 0, 24], forearmL: elbow(52), upperArmR: [-34, 0, -64], forearmR: elbow(52) } }),
+      kf(8, merge(weight(0.6), arms([0, 0, 18], [0, 0, -18]))),
     ],
   },
   {
@@ -444,11 +362,13 @@ export const MOVES: Move[] = [
     mirrorable: false,
     mood: "cool",
     keyframes: [
-      kf(0, merge(weight(0.3), { j: { hips: [0, 46, 0], upperArmL: [-14, 0, 40], forearmL: elbow(48), upperArmR: [-14, 0, -40], forearmR: elbow(48) } })),
-      kf(1, merge(weight(0.3), { j: { hips: [0, 46, 0], spine: [18, 0, 0], chest: [-14, 0, 0], head: [8, 0, 0] } }), "inout"),
-      kf(2, merge(weight(0.3), { j: { hips: [0, 46, 0], spine: [-20, 0, 0], chest: [22, 0, 0], head: [-12, 0, 0] } }), "inout"),
-      kf(3, merge(weight(0.3), { j: { hips: [0, 46, 0], spine: [12, 0, 0], chest: [-18, 0, 0], head: [14, 0, 0] } }), "inout"),
-      kf(4, merge(weight(-0.3), { j: { hips: [0, 20, 0], upperArmL: [-14, 0, 40], forearmL: elbow(48), upperArmR: [-14, 0, -40], forearmR: elbow(48) } }), "inout"),
+      // 正面固定のカメラでは前後の波が見えないので、体を斜めに向けてから波打つ。
+      // 向きは必ず正面に戻して終える（ブロックを跨ぐときに向きが飛ばないため）
+      kf(0, merge(weight(0.3), { j: { upperArmL: [-14, 0, 40], forearmL: elbow(48), upperArmR: [-14, 0, -40], forearmR: elbow(48) } })),
+      kf(1, merge(weight(0.3), { j: { hips: [0, 44, 0], spine: [18, 0, 0], chest: [-14, 0, 0], head: [8, 0, 0] } }), "inout"),
+      kf(2, merge(weight(0.3), { j: { hips: [0, 44, 0], spine: [-20, 0, 0], chest: [22, 0, 0], head: [-12, 0, 0] } }), "inout"),
+      kf(3, merge(weight(0.3), { j: { hips: [0, 44, 0], spine: [12, 0, 0], chest: [-18, 0, 0], head: [14, 0, 0] } }), "inout"),
+      kf(4, merge(weight(-0.3), { j: { upperArmL: [-14, 0, 40], forearmL: elbow(48), upperArmR: [-14, 0, -40], forearmR: elbow(48) } }), "inout"),
     ],
   },
   {
@@ -610,6 +530,178 @@ export const MOVES: Move[] = [
       kf(4, merge(weight(-0.9), { j: { spine: [0, 0, -10], chest: [0, 12, -6], head: [0, 18, -12], upperArmL: [-30, 0, 46], forearmL: elbows(92, 48)[0], upperArmR: [12, 0, -30], forearmR: elbow(30) } }), "hold"),
     ],
   },
+
+  {
+    id: "chestIso",
+    name: "胸を左右に出す",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "cool",
+    keyframes: [
+      kf(0, merge(weight(0.3), { j: { spine: [0, 0, -12], chest: [0, 0, 20], head: [0, 0, -10], upperArmL: [-16, 0, 54], forearmL: elbow(76), upperArmR: [-16, 0, -54], forearmR: elbow(76) } })),
+      kf(1, merge(weight(0.3), { j: { spine: [0, 0, 12], chest: [0, 0, -20], head: [0, 0, 10], upperArmL: [-16, 0, 54], forearmL: elbow(76), upperArmR: [-16, 0, -54], forearmR: elbow(76) } })),
+      kf(2, merge(weight(-0.3), { j: { spine: [0, 0, -12], chest: [0, 0, 20], head: [0, 0, -10], upperArmL: [-16, 0, 54], forearmL: elbow(76), upperArmR: [-16, 0, -54], forearmR: elbow(76) } })),
+      kf(3, merge(weight(-0.3), { j: { spine: [0, 0, 12], chest: [0, 0, -20], head: [0, 0, 10], upperArmL: [-16, 0, 54], forearmL: elbow(76), upperArmR: [-16, 0, -54], forearmR: elbow(76) } })),
+      kf(4, merge(weight(0.3), { j: { spine: [0, 0, -12], chest: [0, 0, 20], head: [0, 0, -10], upperArmL: [-16, 0, 54], forearmL: elbow(76), upperArmR: [-16, 0, -54], forearmR: elbow(76) } })),
+    ],
+  },
+  {
+    id: "armSnapDown",
+    name: "腕を振り下ろす",
+    counts: 4,
+    energy: 2,
+    mirrorable: true,
+    mood: "cool",
+    keyframes: [
+      kf(0, merge(weight(0.6), { j: { upperArmL: [-20, 0, 152], forearmL: elbow(16), upperArmR: [0, 0, -24], forearmR: elbow(22), chest: [0, 0, 8] } })),
+      kf(1, merge(weight(-0.8), { j: { upperArmL: [-34, 0, 24], forearmL: elbows(98, 40)[0], upperArmR: [0, 0, -24], forearmR: elbow(22), chest: [0, 0, -10], spine: [-10, 0, 0], head: [8, 0, 0] } })),
+      kf(2, merge(weight(-0.8), { j: { upperArmL: [-34, 0, 24], forearmL: elbows(98, 40)[0], upperArmR: [0, 0, -24], forearmR: elbow(22), chest: [0, 0, -10], spine: [-10, 0, 0], head: [8, 0, 0] } }), "hold"),
+      kf(4, merge(weight(0.6), arms([0, 0, 20], [0, 0, -20]))),
+    ],
+  },
+  {
+    id: "crossPunch",
+    name: "クロスパンチ",
+    counts: 4,
+    energy: 2,
+    mirrorable: true,
+    mood: "cool",
+    keyframes: [
+      kf(0, merge(weight(0.5), { j: { upperArmL: [-74, 0, -28], forearmL: elbow(18), upperArmR: [-38, 0, 16], forearmR: elbows(104, 54)[1], chest: [0, 26, 0], head: [0, 14, 0] } })),
+      kf(1, merge(weight(-0.5), { j: { upperArmR: [-74, 0, 28], forearmR: elbow(18), upperArmL: [-38, 0, -16], forearmL: elbows(104, 54)[0], chest: [0, -26, 0], head: [0, -14, 0] } })),
+      kf(2, merge(weight(0.5), { j: { upperArmL: [-74, 0, -28], forearmL: elbow(18), upperArmR: [-38, 0, 16], forearmR: elbows(104, 54)[1], chest: [0, 26, 0], head: [0, 14, 0] } })),
+      kf(3, merge(weight(-0.5), { j: { upperArmR: [-74, 0, 28], forearmR: elbow(18), upperArmL: [-38, 0, -16], forearmL: elbows(104, 54)[0], chest: [0, -26, 0], head: [0, -14, 0] } })),
+      kf(4, merge(weight(0.5), { j: { upperArmL: [-74, 0, -28], forearmL: elbow(18), upperArmR: [-38, 0, 16], forearmR: elbows(104, 54)[1], chest: [0, 26, 0], head: [0, 14, 0] } })),
+    ],
+  },
+  {
+    id: "shoulderLean",
+    name: "肩を入れる",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "cool",
+    keyframes: [
+      kf(0, merge(weight(0.9), { j: { spine: [0, 0, 16], chest: [0, 0, 12], head: [0, 0, -14], upperArmL: [-26, 0, 32], forearmL: elbows(88, 44)[0], upperArmR: [16, 0, -30], forearmR: elbow(30) } })),
+      kf(2, merge(weight(-0.9), { j: { spine: [0, 0, -16], chest: [0, 0, -12], head: [0, 0, 14], upperArmR: [-26, 0, -32], forearmR: elbows(88, 44)[1], upperArmL: [16, 0, 30], forearmL: elbow(30) } })),
+      kf(4, merge(weight(0.9), { j: { spine: [0, 0, 16], chest: [0, 0, 12], head: [0, 0, -14], upperArmL: [-26, 0, 32], forearmL: elbows(88, 44)[0], upperArmR: [16, 0, -30], forearmR: elbow(30) } })),
+    ],
+  },
+
+  {
+    id: "hipPush",
+    name: "腰を突き出す",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "sultry",
+    keyframes: [
+      kf(0, merge(weight(1), { j: { hips: [0, 0, -14], spine: [0, 0, 20], chest: [0, 0, 12], head: [0, 0, -10], upperArmL: [-30, 0, 26], forearmL: elbows(112, 62)[0], upperArmR: [0, 0, -26], forearmR: elbow(22) } })),
+      kf(2, merge(weight(-1), { j: { hips: [0, 0, 14], spine: [0, 0, -20], chest: [0, 0, -12], head: [0, 0, 10], upperArmL: [-30, 0, 26], forearmL: elbows(112, 62)[0], upperArmR: [0, 0, -26], forearmR: elbow(22) } })),
+      kf(4, merge(weight(1), { j: { hips: [0, 0, -14], spine: [0, 0, 20], chest: [0, 0, 12], head: [0, 0, -10], upperArmL: [-30, 0, 26], forearmL: elbows(112, 62)[0], upperArmR: [0, 0, -26], forearmR: elbow(22) } })),
+    ],
+  },
+  {
+    id: "shoulderRoll",
+    name: "肩を回す",
+    counts: 4,
+    energy: 0,
+    mirrorable: true,
+    mood: "sultry",
+    keyframes: [
+      kf(0, merge(weight(0.5), { j: { upperArmL: [-32, 0, 24], forearmL: elbows(96, 50)[0], upperArmR: [0, 0, -24], forearmR: elbow(20), chest: [0, 12, 5] } })),
+      kf(1, merge(weight(0.5), { j: { upperArmL: [18, 0, 28], forearmL: elbows(68, 36)[0], upperArmR: [0, 0, -24], forearmR: elbow(20), chest: [0, -8, 3] } }), "inout"),
+      kf(2, merge(weight(-0.5), { j: { upperArmL: [-32, 0, 24], forearmL: elbows(96, 50)[0], upperArmR: [0, 0, -24], forearmR: elbow(20), chest: [0, 12, 5] } }), "inout"),
+      kf(4, merge(weight(-0.5), arms([0, 0, 24], [0, 0, -24])), "inout"),
+    ],
+  },
+  {
+    id: "armDrape",
+    name: "腕を絡める",
+    counts: 4,
+    energy: 0,
+    mirrorable: true,
+    mood: "sultry",
+    keyframes: [
+      kf(0, merge(weight(0.6), { j: { upperArmL: [-36, 0, -20], forearmL: elbows(114, 76)[0], upperArmR: [-36, 0, 20], forearmR: elbows(114, 76)[1], chest: [0, 14, 0], head: [0, 10, 10] } })),
+      kf(2, merge(weight(-0.6), { j: { upperArmL: [-36, 0, -20], forearmL: elbows(114, 76)[0], upperArmR: [-36, 0, 20], forearmR: elbows(114, 76)[1], chest: [0, -14, 0], head: [0, -10, -10] } })),
+      kf(4, merge(weight(0.6), { j: { upperArmL: [-36, 0, -20], forearmL: elbows(114, 76)[0], upperArmR: [-36, 0, 20], forearmR: elbows(114, 76)[1], chest: [0, 14, 0], head: [0, 10, 10] } })),
+    ],
+  },
+  {
+    id: "legCross",
+    name: "脚を組んで立つ",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "sultry",
+    keyframes: [
+      kf(0, merge(weight(1), arms([0, 0, 24], [0, 0, -24]))),
+      kf(2, merge(weight(1), { j: { thighR: [-8, 0, 24], shinR: [18, 0, 0], footR: [12, 0, 0], spine: [0, 0, 12], chest: [0, 0, 8], head: [0, 0, -10], upperArmL: [-28, 0, 26], forearmL: elbows(98, 52)[0], upperArmR: [0, 0, -22], forearmR: elbow(20) } })),
+      kf(4, merge(weight(1), arms([0, 0, 24], [0, 0, -24]))),
+    ],
+  },
+
+  {
+    id: "handWave",
+    name: "手を振る",
+    counts: 4,
+    energy: 0,
+    mirrorable: true,
+    mood: "cute",
+    keyframes: [
+      kf(0, merge(weight(0.5), { j: { upperArmL: [-16, 0, 124], forearmL: elbow(42), handL: [0, 0, 28], upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 12] } })),
+      kf(1, merge(weight(0.5), { j: { upperArmL: [-16, 0, 124], forearmL: elbow(42), handL: [0, 0, -28], upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 12] } })),
+      kf(2, merge(weight(-0.5), { j: { upperArmL: [-16, 0, 124], forearmL: elbow(42), handL: [0, 0, 28], upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 12] } })),
+      kf(3, merge(weight(-0.5), { j: { upperArmL: [-16, 0, 124], forearmL: elbow(42), handL: [0, 0, -28], upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 12] } })),
+      kf(4, merge(weight(0.5), { j: { upperArmL: [-16, 0, 124], forearmL: elbow(42), handL: [0, 0, 28], upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 12] } })),
+    ],
+  },
+  {
+    id: "cutePoint",
+    name: "指さし",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "cute",
+    keyframes: [
+      kf(0, merge(weight(0.6), arms([0, 0, 22], [0, 0, -22]))),
+      kf(1, merge(weight(0.6), { j: { upperArmL: [-54, 0, 64], forearmL: elbow(26), upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 20], chest: [0, 0, 8] } })),
+      kf(2, merge(weight(0.6), { j: { upperArmL: [-54, 0, 64], forearmL: elbow(26), upperArmR: [0, 0, -24], forearmR: elbow(22), head: [0, 0, 20], chest: [0, 0, 8] } }), "hold"),
+      kf(4, merge(weight(-0.6), arms([0, 0, 22], [0, 0, -22]))),
+    ],
+  },
+  {
+    id: "hopTurn",
+    name: "跳ねて向きを変える",
+    counts: 4,
+    energy: 2,
+    mirrorable: true,
+    mood: "cute",
+    keyframes: [
+      kf(0, merge(weight(0.4), { j: { upperArmL: [-20, 0, 44], forearmL: elbow(72), upperArmR: [-20, 0, -44], forearmR: elbow(72) } })),
+      kf(1, { root: { y: HIP_HEIGHT + 0.05 }, j: { hips: [0, 52, 0], upperArmL: [-20, 0, 58], forearmL: elbow(60), upperArmR: [-20, 0, -58], forearmR: elbow(60), thighL: [0, 0, 4], thighR: [0, 0, -4], footL: [-18, 0, 0], footR: [-18, 0, 0] } }),
+      kf(2, merge(weight(-0.4), { j: { hips: [0, 52, 0], upperArmL: [-20, 0, 44], forearmL: elbow(72), upperArmR: [-20, 0, -44], forearmR: elbow(72) } })),
+      kf(3, { root: { y: HIP_HEIGHT + 0.05 }, j: { hips: [0, 12, 0], upperArmL: [-20, 0, 58], forearmL: elbow(60), upperArmR: [-20, 0, -58], forearmR: elbow(60), thighL: [0, 0, 4], thighR: [0, 0, -4], footL: [-18, 0, 0], footR: [-18, 0, 0] } }),
+      kf(4, merge(weight(0.4), { j: { upperArmL: [-20, 0, 44], forearmL: elbow(72), upperArmR: [-20, 0, -44], forearmR: elbow(72) } })),
+    ],
+  },
+  {
+    id: "armSwing",
+    name: "腕をぶんぶん",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "cute",
+    keyframes: [
+      kf(0, merge(weight(0.6), { j: { upperArmL: [-30, 0, 74], forearmL: elbow(48), upperArmR: [-30, 0, -14], forearmR: elbow(48), chest: [0, 0, 8], head: [0, 0, -8] } })),
+      kf(1, merge(weight(-0.6), { j: { upperArmL: [-30, 0, 14], forearmL: elbow(48), upperArmR: [-30, 0, -74], forearmR: elbow(48), chest: [0, 0, -8], head: [0, 0, 8] } })),
+      kf(2, merge(weight(0.6), { j: { upperArmL: [-30, 0, 74], forearmL: elbow(48), upperArmR: [-30, 0, -14], forearmR: elbow(48), chest: [0, 0, 8], head: [0, 0, -8] } })),
+      kf(3, merge(weight(-0.6), { j: { upperArmL: [-30, 0, 14], forearmL: elbow(48), upperArmR: [-30, 0, -74], forearmR: elbow(48), chest: [0, 0, -8], head: [0, 0, 8] } })),
+      kf(4, merge(weight(0.6), { j: { upperArmL: [-30, 0, 74], forearmL: elbow(48), upperArmR: [-30, 0, -14], forearmR: elbow(48), chest: [0, 0, 8], head: [0, 0, -8] } })),
+    ],
+  },
   {
     id: "poseCross",
     name: "キメ（腕クロス）",
@@ -634,8 +726,8 @@ export const MOVES: Move[] = [
     keyframes: [
       kf(0, merge(weight(0.5), arms([0, 0, 16], [0, 0, -16]))),
       kf(1, { root: { y: HIP_HEIGHT - 0.1 }, j: { thighL: [-26, 0, 8], shinL: [48, 0, 0], thighR: [-26, 0, -8], shinR: [48, 0, 0], spine: [-12, 0, 0], upperArmL: [-30, 0, 30], upperArmR: [-30, 0, -30] } }),
-      kf(2, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }),
-      kf(4, { root: { x: 0.03, y: HIP_HEIGHT }, j: { hips: [0, -14, 0], upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, 8, 6], head: [-10, -10, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
+      kf(2, { root: { x: 0.03, y: HIP_HEIGHT }, j: { upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, -20, 6], head: [-10, -18, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }),
+      kf(4, { root: { x: 0.03, y: HIP_HEIGHT }, j: { upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, -20, 6], head: [-10, -18, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
     ],
   },
 ];

@@ -121,6 +121,27 @@ describe("振り付けパーツ", () => {
     expect(MOVES.filter((m) => m.accent).length).toBeGreaterThan(0);
   });
 
+  it("回転は始点と同じ向きで終わる（巻き戻りが起きない）", () => {
+    // オイラー角の補間は最短経路を選ばないので、360度まで回して終わると
+    // 次のブロックへ繋ぐときに逆回転で巻き戻る。実際に「半回転」がそうなっていた
+    for (const move of MOVES) {
+      const first = move.keyframes[0].pose.j?.hips?.[1] ?? 0;
+      const last = move.keyframes[move.keyframes.length - 1].pose.j?.hips?.[1] ?? 0;
+      expect(Math.abs(last - first)).toBeLessThan(1);
+    }
+  });
+
+  it("パーツの中で向きが飛ばない", () => {
+    // キーフレーム間で 180度を超えて回すと、どちら回りか決められない
+    for (const move of MOVES) {
+      for (let i = 1; i < move.keyframes.length; i++) {
+        const a = move.keyframes[i - 1].pose.j?.hips?.[1] ?? 0;
+        const b = move.keyframes[i].pose.j?.hips?.[1] ?? 0;
+        expect(Math.abs(b - a)).toBeLessThanOrEqual(180);
+      }
+    }
+  });
+
   it("hold は同じポーズの間だけに使う（違うポーズだと動きが飛ぶ）", () => {
     for (const move of MOVES) {
       for (let i = 1; i < move.keyframes.length; i++) {
