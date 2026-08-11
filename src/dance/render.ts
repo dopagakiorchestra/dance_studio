@@ -14,9 +14,11 @@
 import type { Choreography } from "./choreo";
 import { sampleSkeleton, type SampleOptions } from "./sampler";
 import {
-  HEAD_RADIUS,
+  DEFAULT_BODY,
+  headRadiusOf,
+  limbsOf,
+  type Body,
   JOINT_NAMES,
-  LIMBS,
   rotate,
   type JointName,
   type PosedSkeleton,
@@ -102,17 +104,21 @@ function normalize(p: Vec3): { u: number; v: number; d: number } {
   return { u: (p.x - CAM.x) * k, v: (p.y - CAM.y) * k, d };
 }
 
-/** 関節ごとの見た目の半径。画角を決めるときにこのぶんも余白として見る。 */
-const JOINT_RADIUS: Partial<Record<JointName, number>> = (() => {
+/**
+ * 関節ごとの見た目の半径。画角を決めるときにこのぶんも余白として見る。
+ * 体型で太さと頭の大きさが変わるので、そのつど作り直す。
+ */
+function jointRadiusOf(body: Body): Partial<Record<JointName, number>> {
   const r: Partial<Record<JointName, number>> = {};
-  for (const limb of LIMBS) {
+  for (const limb of limbsOf(body)) {
     r[limb.from] = Math.max(r[limb.from] ?? 0, limb.r0);
     r[limb.to] = Math.max(r[limb.to] ?? 0, limb.r1);
   }
-  r.head = Math.max(r.head ?? 0, HEAD_RADIUS);
-  r.headTop = Math.max(r.headTop ?? 0, HEAD_RADIUS);
+  const head = headRadiusOf(body);
+  r.head = Math.max(r.head ?? 0, head);
+  r.headTop = Math.max(r.headTop ?? 0, head);
   return r;
-})();
+}
 
 /**
  * 振り付け全体を走査して画角を決める。
@@ -134,13 +140,14 @@ export function createStage(
   // 走査は細かく取る。ダイナミクスを上げると動きが速くなり、粗い刻みでは
   // 行き過ぎた一瞬の極値を跨いで見落とす。見落とすと本番でそのコマだけ
   // 手足が画面外へ出る（0.25 刻みで実際に 2px はみ出した）。
+  const radius = jointRadiusOf(opts.body ?? DEFAULT_BODY);
   const step = 0.05;
   const samples = Math.max(1, Math.ceil(choreo.totalCounts / step));
   for (let i = 0; i < samples; i++) {
     const skeleton = sampleSkeleton(choreo, i * step, opts);
     for (const name of JOINT_NAMES) {
       const { u, v, d } = normalize(skeleton.pos[name]);
-      const margin = ((JOINT_RADIUS[name] ?? 0) * CAM.z) / d;
+      const margin = ((radius[name] ?? 0) * CAM.z) / d;
       uMin = Math.min(uMin, u - margin);
       uMax = Math.max(uMax, u + margin);
       vMin = Math.min(vMin, v - margin);
@@ -207,6 +214,8 @@ interface Drawable {
 
 export interface DrawOptions {
   palette: StagePalette;
+  /** 体型。省略時は標準。 */
+  body?: Body;
   /** 接地の影を描くか。 */
   shadow?: boolean;
   /** 輪郭線を描くか。 */
@@ -221,6 +230,8 @@ export function drawFrame(
   opts: DrawOptions,
 ): void {
   const { palette } = opts;
+  const body = opts.body ?? DEFAULT_BODY;
+  const headRadius = headRadiusOf(body);
   ctx.save();
   ctx.fillStyle = palette.background;
   ctx.fillRect(0, 0, stage.width, stage.height);
@@ -230,7 +241,7 @@ export function drawFrame(
   const lineWidth = Math.max(1.5, stage.unit * 0.006);
   const parts: Drawable[] = [];
 
-  for (const limb of LIMBS) {
+  for (const limb of limbsOf(body)) {
     const a = project(stage, skeleton.pos[limb.from]);
     const b = project(stage, skeleton.pos[limb.to]);
     parts.push({
@@ -256,7 +267,7 @@ export function drawFrame(
     depth: headScreen.d,
     paint: () => {
       ctx.beginPath();
-      ctx.arc(headScreen.x, headScreen.y, HEAD_RADIUS * headScreen.k, 0, Math.PI * 2);
+      ctx.arc(headScreen.x, headScreen.y, headRadius * headScreen.k, 0, Math.PI * 2);
       ctx.fill();
       if (opts.outline !== false) ctx.stroke();
 
@@ -267,12 +278,12 @@ export function drawFrame(
       // 手前（+Z）へのずらしをワールド座標で入れると、遠近のせいで顔が
       // 上にせり上がって帽子のように見えてしまう。
       if (forward.z <= 0.05) return;
-      const offset = HEAD_RADIUS * 0.7 * headScreen.k;
+      const offset = headRadius * 0.7 * headScreen.k;
       ctx.beginPath();
       ctx.arc(
         headScreen.x + forward.x * offset,
         headScreen.y - forward.y * offset,
-        HEAD_RADIUS * 0.5 * forward.z * headScreen.k,
+        headRadius * 0.5 * forward.z * headScreen.k,
         0,
         Math.PI * 2,
       );
@@ -317,14 +328,16 @@ function drawShadow(
 export function frameBounds(
   skeleton: PosedSkeleton,
   stage: Stage,
+  body: Body = DEFAULT_BODY,
 ): { minX: number; maxX: number; minY: number; maxY: number } {
+  const radius = jointRadiusOf(body);
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
   for (const name of JOINT_NAMES) {
     const s = project(stage, skeleton.pos[name]);
-    const r = (JOINT_RADIUS[name] ?? 0) * s.k;
+    const r = (radius[name] ?? 0) * s.k;
     minX = Math.min(minX, s.x - r);
     maxX = Math.max(maxX, s.x + r);
     minY = Math.min(minY, s.y - r);

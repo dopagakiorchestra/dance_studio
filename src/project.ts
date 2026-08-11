@@ -10,6 +10,7 @@
  */
 
 import { DEFAULT_DANCE, normalizeDance, type DanceSettings } from "./dance/choreo";
+import { DEFAULT_BODY, type Body } from "./dance/skeleton";
 
 export interface DanceProject {
   /** テンポ。 */
@@ -21,7 +22,17 @@ export interface DanceProject {
   /** 書き出すときに何回くり返すか。 */
   repeats: number;
   dance: DanceSettings;
+  /** マネキンの体型。 */
+  body: Body;
 }
+
+/**
+ * 体型の可動範囲。
+ *
+ * 極端にすると足が地面から離れたり、頭が体に埋まったりするので、
+ * 破綻しない幅に留めてある。
+ */
+export const BODY_RANGE = { min: 0.7, max: 1.4 } as const;
 
 export const BPM_RANGE = { min: 40, max: 240 } as const;
 export const BARS_RANGE = { min: 1, max: 64 } as const;
@@ -36,6 +47,7 @@ export const DEFAULT_PROJECT: DanceProject = {
   bars: 8,
   repeats: 2,
   dance: DEFAULT_DANCE,
+  body: DEFAULT_BODY,
 };
 
 /** 1ループの拍数。振り付けの長さはこれで決まる。 */
@@ -80,6 +92,23 @@ export function normalizeProject(raw: unknown): DanceProject {
     bars: clampInt(o.bars, BARS_RANGE.min, BARS_RANGE.max, DEFAULT_PROJECT.bars),
     repeats: clampInt(o.repeats, REPEATS_RANGE.min, REPEATS_RANGE.max, DEFAULT_PROJECT.repeats),
     dance: normalizeDance(o.dance),
+    body: normalizeBody(o.body),
+  };
+}
+
+/** 任意の入力を安全な Body に整える。 */
+export function normalizeBody(raw: unknown): Body {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const part = (v: unknown, fallback: number): number => {
+    const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    return Math.min(BODY_RANGE.max, Math.max(BODY_RANGE.min, n));
+  };
+  return {
+    head: part(o.head, DEFAULT_BODY.head),
+    legs: part(o.legs, DEFAULT_BODY.legs),
+    arms: part(o.arms, DEFAULT_BODY.arms),
+    build: part(o.build, DEFAULT_BODY.build),
+    shoulders: part(o.shoulders, DEFAULT_BODY.shoulders),
   };
 }
 

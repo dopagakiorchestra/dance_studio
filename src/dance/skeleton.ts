@@ -90,6 +90,85 @@ const JOINTS: JointDef[] = [
 
 export const JOINT_NAMES: JointName[] = JOINTS.map((j) => j.name);
 
+/**
+ * 体型。すべて 1 が標準。
+ *
+ * 画角は振り付け全体に自動で合わせるので、体を一様に拡大しても画面上の
+ * 見え方は変わらない。映像変換が拾うのは絶対的な背丈ではなく比率なので、
+ * ここで持つのは長さそのものではなく「標準からの倍率」にしてある。
+ */
+export interface Body {
+  /** 頭の大きさ。上げるほど頭身が下がって幼く見える。 */
+  head: number;
+  /** 脚の長さ。全身の背丈もこれで決まる。 */
+  legs: number;
+  /** 腕の長さ。 */
+  arms: number;
+  /** 手足と胴の太さ。 */
+  build: number;
+  /** 肩幅。 */
+  shoulders: number;
+}
+
+export const DEFAULT_BODY: Body = { head: 1, legs: 1, arms: 1, build: 1, shoulders: 1 };
+
+/** 脚の長さに関わる関節（親からの距離が脚の長さを作る）。 */
+const LEG_JOINTS = new Set<JointName>(["thighL", "shinL", "footL", "toeL", "thighR", "shinR", "footR", "toeR"]);
+
+/** 腕の長さに関わる関節。 */
+const ARM_JOINTS = new Set<JointName>([
+  "forearmL", "handL", "handTipL", "forearmR", "handR", "handTipR",
+]);
+
+/** 体型を反映した関節の位置ずれ。 */
+function scaledOffset(joint: JointDef, body: Body): Vec3 {
+  const o = joint.offset;
+  if (joint.name === "headTop") return { x: o.x, y: o.y * body.head, z: o.z };
+  if (joint.name === "upperArmL" || joint.name === "upperArmR") {
+    return { x: o.x * body.shoulders, y: o.y, z: o.z };
+  }
+  if (LEG_JOINTS.has(joint.name)) {
+    return { x: o.x * body.shoulders, y: o.y * body.legs, z: o.z * body.legs };
+  }
+  if (ARM_JOINTS.has(joint.name)) return { x: o.x, y: o.y * body.arms, z: o.z };
+  return o;
+}
+
+/** その体型での腰の高さ。 */
+export function hipHeightOf(body: Body): number {
+  return HIP_HEIGHT * body.legs;
+}
+
+/** その体型での身長（足裏から頭頂まで）。 */
+export function restHeightOf(body: Body): number {
+  return hipHeightOf(body) + 0.1 + 0.18 + 0.18 + 0.11 + 0.16 * body.head;
+}
+
+/**
+ * 頭身（身長 ÷ 頭の大きさ）。表示用。
+ *
+ * 骨格の首から頭頂までの長さではなく、実際に描かれる球の直径で割る。
+ * 見ている人が数えるのはそちらなので、骨格上の値で出すと実物より
+ * 小さい数字になる（標準が 5.4 頭身に見えてしまっていた）。
+ */
+export function headToBody(body: Body): number {
+  const radius = headRadiusOf(body);
+  // 描かれる頭は head と headTop の中間を中心にした球。てっぺんはその上端
+  const headJointY = hipHeightOf(body) + 0.1 + 0.18 + 0.18 + 0.11;
+  const silhouetteTop = headJointY + 0.08 * body.head + radius;
+  return silhouetteTop / (radius * 2);
+}
+
+/** その体型での頭の半径。 */
+export function headRadiusOf(body: Body): number {
+  return HEAD_RADIUS * body.head;
+}
+
+/** その体型での体のパーツ（太さを反映）。 */
+export function limbsOf(body: Body): Limb[] {
+  return LIMBS.map((l) => ({ ...l, r0: l.r0 * body.build, r1: l.r1 * body.build }));
+}
+
 /** 直立時の腰の高さ。足の裏がちょうど y=0 に来る。 */
 export const HIP_HEIGHT = 0.04 + 0.45 + 0.43 + 0.04;
 
@@ -180,15 +259,18 @@ const ZERO: Rot = [0, 0, 0];
  * 各関節は「親の回転で運ばれた位置」に置かれ、自分の回転は子から先に効く。
  * 一般的なスケルトンアニメーションと同じ規約。
  */
-export function solvePose(pose: Pose): PosedSkeleton {
+export function solvePose(pose: Pose, body: Body = DEFAULT_BODY): PosedSkeleton {
   const pos = {} as Record<JointName, Vec3>;
   const rot = {} as Record<JointName, Mat3>;
 
+  // 振り付けは脚の長さが標準のつもりで書かれている。腰の位置をまとめて
+  // 脚の倍率で伸ばすと、しゃがみの深さも横への体重移動も同じ比率で付いてくる。
+  // weight() が足の位置を打ち消すのに使う角度も、比が変わらないので崩れない。
   const rootSpec = pose.root ?? {};
   const rootPos: Vec3 = {
-    x: rootSpec.x ?? 0,
-    y: rootSpec.y ?? HIP_HEIGHT,
-    z: rootSpec.z ?? 0,
+    x: (rootSpec.x ?? 0) * body.legs,
+    y: (rootSpec.y ?? HIP_HEIGHT) * body.legs,
+    z: (rootSpec.z ?? 0) * body.legs,
   };
 
   for (const joint of JOINTS) {
@@ -200,7 +282,7 @@ export function solvePose(pose: Pose): PosedSkeleton {
     }
     const parentRot = rot[joint.parent] ?? IDENTITY;
     const parentPos = pos[joint.parent];
-    const moved = apply(parentRot, joint.offset);
+    const moved = apply(parentRot, scaledOffset(joint, body));
     pos[joint.name] = {
       x: parentPos.x + moved.x,
       y: parentPos.y + moved.y,

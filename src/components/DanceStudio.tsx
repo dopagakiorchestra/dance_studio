@@ -20,7 +20,8 @@ import {
   VIDEO_SIZES,
   type FrameRate,
 } from "../dance/video";
-import { beatsPerLoop, secondsPerBeat, totalSeconds, type DanceProject } from "../project";
+import { BODY_RANGE, beatsPerLoop, secondsPerBeat, totalSeconds, type DanceProject } from "../project";
+import { headToBody, restHeightOf, type Body } from "../dance/skeleton";
 import { saveBlob, safeFilename, saveNeedsUserTap, type SaveOutcome } from "../save";
 
 type ExportState =
@@ -39,6 +40,7 @@ type ExportState =
 export interface DanceStudioProps {
   project: DanceProject;
   onChange: (dance: DanceSettings) => void;
+  onBodyChange: (body: Body) => void;
   /** 再生中のループ内の拍位置。止まっていれば null。 */
   playPosition: number | null;
 }
@@ -51,10 +53,29 @@ const MOOD_GROUPS: Array<{ mood: Mood | undefined; label: string }> = [
   { mood: "cute", label: "かわいい" },
 ];
 
+/** 体型のつまみ。 */
+const BODY_PARTS: Array<{ key: keyof Body; label: string }> = [
+  { key: "head", label: "頭の大きさ" },
+  { key: "legs", label: "脚の長さ" },
+  { key: "arms", label: "腕の長さ" },
+  { key: "build", label: "体の太さ" },
+  { key: "shoulders", label: "肩幅" },
+];
+
+/** 頭身の目安になる型。細かく作り込むより、まずここから寄せるほうが早い。 */
+const BODY_PRESETS: Array<{ label: string; body: Body }> = [
+  { label: "標準", body: { head: 1, legs: 1, arms: 1, build: 1, shoulders: 1 } },
+  { label: "スタイル良く", body: { head: 0.9, legs: 1.14, arms: 1.04, build: 0.9, shoulders: 0.98 } },
+  { label: "デフォルメ", body: { head: 1.4, legs: 0.82, arms: 0.9, build: 1.16, shoulders: 0.9 } },
+  { label: "がっしり", body: { head: 0.94, legs: 0.96, arms: 1.02, build: 1.3, shoulders: 1.25 } },
+];
+
+const DEFAULT_PROJECT_BODY: Body = { head: 1, legs: 1, arms: 1, build: 1, shoulders: 1 };
+
 /** プレビューの表示上の最大の高さ（CSS ピクセル）。 */
 const PREVIEW_MAX_HEIGHT = 400;
 
-export function DanceStudio({ project, onChange, playPosition }: DanceStudioProps) {
+export function DanceStudio({ project, onChange, onBodyChange, playPosition }: DanceStudioProps) {
   const dance = project.dance;
 
   const [sizeId, setSizeId] = useState("portrait");
@@ -76,8 +97,8 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
 
   /** 描画に使うサンプリング設定。プレビューと書き出しで必ず同じものを使う。 */
   const sampleOpts = useMemo(
-    () => ({ bounce: dance.bounce, chain: dance.chain, snap: dance.snap }),
-    [dance.bounce, dance.chain, dance.snap],
+    () => ({ bounce: dance.bounce, chain: dance.chain, snap: dance.snap, body: project.body }),
+    [dance.bounce, dance.chain, dance.snap, project.body],
   );
 
   /** rAF から最新の値を読むための箱。再描画のたびにループを張り直さないため。 */
@@ -96,7 +117,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
     [previewSize, choreo, sampleOpts],
   );
 
-  const drawOptions = useMemo(() => ({ palette }), [palette]);
+  const drawOptions = useMemo(() => ({ palette, body: project.body }), [palette, project.body]);
 
   // 描画ループは張りっぱなしにして、変わる値だけをここから流し込む。
   // 再生位置が更新されるたびにループを組み直すと、毎フレーム張り替えになる。
@@ -173,10 +194,11 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
         canvas,
         choreo,
         stage,
-        draw: { palette },
+        draw: { palette, body: project.body },
         bounce: dance.bounce,
         chain: dance.chain,
         snap: dance.snap,
+        body: project.body,
         secondsPerBeat: beatSeconds,
         totalBeats: loopBeats * project.repeats,
         fps,
@@ -215,6 +237,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
     loopBeats,
     project.repeats,
     palette,
+    project.body,
     beatSeconds,
     fps,
   ]);
@@ -361,6 +384,42 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
             </p>
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>体型</h2>
+        <p className="hint">
+          映像変換は入力のプロポーションを参照します。背丈そのものは画角が
+          自動で合わせるため見た目に出ませんが、頭身や脚の長さは変換後の
+          キャラクターに残ります。
+        </p>
+        <div className="row">
+          {BODY_PRESETS.map((preset) => (
+            <button key={preset.label} className="btn small" onClick={() => onBodyChange(preset.body)}>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <div className="row">
+          {BODY_PARTS.map(({ key, label }) => (
+            <div className="field" key={key}>
+              <label htmlFor={`body-${key}`}>{label}</label>
+              <input
+                id={`body-${key}`}
+                type="range"
+                min={BODY_RANGE.min}
+                max={BODY_RANGE.max}
+                step={0.02}
+                value={project.body[key]}
+                onChange={(e) => onBodyChange({ ...project.body, [key]: Number(e.target.value) })}
+              />
+            </div>
+          ))}
+        </div>
+        <p className="hint">
+          およそ {headToBody(project.body).toFixed(1)} 頭身 ／ 身長は標準の{" "}
+          {Math.round((restHeightOf(project.body) / restHeightOf(DEFAULT_PROJECT_BODY)) * 100)}%
+        </p>
       </section>
 
       <section className="panel">

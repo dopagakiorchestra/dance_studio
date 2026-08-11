@@ -14,6 +14,7 @@ import { readMp4SampleEntry } from "../mp4";
 import type { Choreography } from "./choreo";
 import { drawFrame, type DrawOptions, type Stage } from "./render";
 import { sampleSkeleton } from "./sampler";
+import type { Body } from "./skeleton";
 
 export interface VideoFormat {
   mime: string;
@@ -84,6 +85,8 @@ export interface RecordDanceOptions {
   chain?: number;
   /** ダイナミクス 0..1。 */
   snap?: number;
+  /** 体型。骨格のサンプリングと描画で必ず同じものを使う。 */
+  body?: Body;
   /** 1拍の秒数。 */
   secondsPerBeat: number;
   /** 書き出す長さ（拍）。 */
@@ -202,6 +205,7 @@ export async function recordDance(opts: RecordDanceOptions): Promise<RecordDance
         bounce: opts.bounce,
         chain: opts.chain,
         snap: opts.snap,
+        body: opts.body,
       });
       drawFrame(ctx, skeleton, opts.stage, opts.draw);
       opts.onProgress?.(Math.max(0, Math.min(0.999, elapsed / duration)));

@@ -12,6 +12,11 @@ import { getMove, MOVES } from "../src/dance/moves";
 import { createStage, frameBounds } from "../src/dance/render";
 import { samplePose, sampleSkeleton } from "../src/dance/sampler";
 import {
+  DEFAULT_BODY,
+  headToBody,
+  hipHeightOf,
+  restHeightOf,
+  type Body,
   HIP_HEIGHT,
   JOINT_NAMES,
   mirrorPose,
@@ -26,8 +31,8 @@ function settings(over: Partial<DanceSettings> = {}): DanceSettings {
 }
 
 /** 骨の長さ（親子の距離）を測る。FK が正しければポーズによらず一定になる。 */
-function boneLengths(pose: Pose): Map<string, number> {
-  const { pos } = solvePose(pose);
+function boneLengths(pose: Pose, body?: Body): Map<string, number> {
+  const { pos } = solvePose(pose, body);
   const pairs: Array<[JointName, JointName]> = [
     ["hips", "spine"],
     ["spine", "chest"],
@@ -596,6 +601,93 @@ describe("肘", () => {
       peak = Math.max(peak, elbowAngle(pose, "L"), elbowAngle(pose, "R"));
     }
     expect(peak).toBeGreaterThan(100);
+  });
+});
+
+describe("体型", () => {
+  const EXTREMES: Body[] = [
+    DEFAULT_BODY,
+    { head: 1.4, legs: 0.7, arms: 0.7, build: 1.4, shoulders: 0.7 },
+    { head: 0.7, legs: 1.4, arms: 1.4, build: 0.7, shoulders: 1.4 },
+  ];
+
+  it("脚を伸ばすと腰も身長も上がる", () => {
+    expect(hipHeightOf({ ...DEFAULT_BODY, legs: 1.2 })).toBeCloseTo(HIP_HEIGHT * 1.2, 9);
+    expect(restHeightOf({ ...DEFAULT_BODY, legs: 1.2 })).toBeGreaterThan(restHeightOf(DEFAULT_BODY));
+  });
+
+  it("頭を大きくすると頭身が下がる", () => {
+    expect(headToBody({ ...DEFAULT_BODY, head: 1.4 })).toBeLessThan(headToBody(DEFAULT_BODY));
+    expect(headToBody(DEFAULT_BODY)).toBeGreaterThan(5);
+    expect(headToBody(DEFAULT_BODY)).toBeLessThan(9);
+  });
+
+  it("体型を変えても足の高さの比率が変わらない", () => {
+    // 振り付けは脚の長さが標準のつもりで書かれている。腰の位置を脚の倍率で
+    // 伸ばさないと、脚だけ伸びて足が地面から浮く（あるいはめり込む）。
+    // 腰の高さに対する比で見れば、どの体型でも同じ値になるはず。
+    const ratio = (body: Body): number => {
+      const choreo = generateChoreography(16, settings({ seed: 3 }));
+      let lowest = Infinity;
+      let highest = -Infinity;
+      for (let count = 0; count < 16; count += 0.25) {
+        const { pos } = solvePose(samplePose(choreo, count, { bounce: 0.6, snap: 0.75 }), body);
+        for (const name of ["footL", "footR", "toeL", "toeR"] as const) {
+          lowest = Math.min(lowest, pos[name].y);
+          highest = Math.max(highest, pos[name].y);
+        }
+      }
+      return (lowest + highest) / hipHeightOf(body);
+    };
+    const base = ratio(DEFAULT_BODY);
+    for (const body of EXTREMES) {
+      expect(ratio(body)).toBeCloseTo(base, 9);
+    }
+  });
+
+  it("どの体型でも足が地面の近くにある", () => {
+    // つま先を伸ばす振りがあるので厳密に 0 以上にはならないが、
+    // 腰の高さの1割も潜っていたら接地が壊れている
+    for (const body of EXTREMES) {
+      const choreo = generateChoreography(16, settings({ seed: 3 }));
+      let lowest = Infinity;
+      for (let count = 0; count < 16; count += 0.25) {
+        const { pos } = solvePose(samplePose(choreo, count, { bounce: 0.6, snap: 0.75 }), body);
+        lowest = Math.min(lowest, pos.footL.y, pos.footR.y, pos.toeL.y, pos.toeR.y);
+      }
+      expect(lowest).toBeGreaterThan(-0.1 * hipHeightOf(body));
+      expect(lowest).toBeLessThan(0.25 * restHeightOf(body));
+    }
+  });
+
+  it("どの体型でも骨の長さがポーズによらず一定", () => {
+    for (const body of EXTREMES) {
+      const rest = boneLengths({}, body);
+      const posed = boneLengths(
+        { root: { x: 0.2, y: 0.8 }, j: { chest: [20, 15, -10], upperArmL: [-60, 0, 120], shinR: [50, 0, 0] } },
+        body,
+      );
+      for (const [name, length] of rest) {
+        expect(posed.get(name)).toBeCloseTo(length, 9);
+      }
+    }
+  });
+
+  it("どの体型でも手足が画面から切れない", () => {
+    // 画角は体型込みで走査する。頭を大きくしたのに標準の半径で測っていると、
+    // 頭のてっぺんだけ画面外に出る
+    for (const body of EXTREMES) {
+      const choreo = generateChoreography(16, settings({ seed: 5 }));
+      const opts = { bounce: 0.6, chain: 0.6, snap: 1, body };
+      const stage = createStage(720, 1280, choreo, opts);
+      for (let count = 0; count < 16; count += 0.05) {
+        const bounds = frameBounds(sampleSkeleton(choreo, count, opts), stage, body);
+        expect(bounds.minX).toBeGreaterThanOrEqual(-0.5);
+        expect(bounds.minY).toBeGreaterThanOrEqual(-0.5);
+        expect(bounds.maxX).toBeLessThanOrEqual(720.5);
+        expect(bounds.maxY).toBeLessThanOrEqual(1280.5);
+      }
+    }
   });
 });
 

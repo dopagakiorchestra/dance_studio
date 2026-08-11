@@ -17,6 +17,7 @@ import type { ChoreoBlock, Choreography } from "./choreo";
 import {
   blendPose,
   HIP_HEIGHT,
+  type Body,
   mirrorPose,
   solvePose,
   type JointName,
@@ -309,6 +310,8 @@ export interface SampleOptions {
   chain?: number;
   /** ダイナミクス 0..1。到達を早めて静止を作り、行き過ぎと振り幅を足す。 */
   snap?: number;
+  /** 体型。省略時は標準。 */
+  body?: Body;
 }
 
 /**
@@ -413,5 +416,5 @@ export function sampleSkeleton(
   countPos: number,
   opts?: SampleOptions,
 ): PosedSkeleton {
-  return solvePose(samplePose(choreo, countPos, opts));
+  return solvePose(samplePose(choreo, countPos, opts), opts?.body);
 }

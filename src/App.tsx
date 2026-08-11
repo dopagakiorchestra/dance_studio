@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioTrack, beatPosition } from "./audio";
 import { DanceStudio } from "./components/DanceStudio";
 import type { DanceSettings } from "./dance/choreo";
+import type { Body } from "./dance/skeleton";
 import {
   BARS_RANGE,
   BEATS_PER_BAR,
@@ -80,6 +81,10 @@ export default function App() {
 
   const handleDanceChange = useCallback((dance: DanceSettings) => {
     setProject((current) => ({ ...current, dance }));
+  }, []);
+
+  const handleBodyChange = useCallback((body: Body) => {
+    setProject((current) => ({ ...current, body }));
   }, []);
 
   const handleFile = async (file: File | undefined) => {
@@ -243,7 +248,12 @@ export default function App() {
         {note && <p className="hint">{note}</p>}
       </section>
 
-      <DanceStudio project={project} onChange={handleDanceChange} playPosition={playPosition} />
+      <DanceStudio
+        project={project}
+        onChange={handleDanceChange}
+        onBodyChange={handleBodyChange}
+        playPosition={playPosition}
+      />
 
       <footer className="footer">
         <p className="hint">
