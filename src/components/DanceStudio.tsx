@@ -68,8 +68,8 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
 
   /** 描画に使うサンプリング設定。プレビューと書き出しで必ず同じものを使う。 */
   const sampleOpts = useMemo(
-    () => ({ bounce: dance.bounce, chain: dance.chain }),
-    [dance.bounce, dance.chain],
+    () => ({ bounce: dance.bounce, chain: dance.chain, snap: dance.snap }),
+    [dance.bounce, dance.chain, dance.snap],
   );
 
   /** rAF から最新の値を読むための箱。再描画のたびにループを張り直さないため。 */
@@ -168,6 +168,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
         draw: { palette },
         bounce: dance.bounce,
         chain: dance.chain,
+        snap: dance.snap,
         secondsPerBeat: beatSeconds,
         totalBeats: loopBeats * project.repeats,
         fps,
@@ -201,6 +202,7 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
     sampleOpts,
     dance.bounce,
     dance.chain,
+    dance.snap,
     dance.seed,
     loopBeats,
     project.repeats,
@@ -274,6 +276,18 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
                 />
               </div>
               <div className="field">
+                <label htmlFor="dance-snap">ダイナミクス</label>
+                <input
+                  id="dance-snap"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={dance.snap}
+                  onChange={(e) => patch({ snap: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field">
                 <label htmlFor="dance-chain">体の連鎖</label>
                 <input
                   id="dance-chain"
@@ -332,9 +346,11 @@ export function DanceStudio({ project, onChange, playPosition }: DanceStudioProp
               「動きの大きさ」を上げると、大ぶりな振りが選ばれやすくなります。
               「ビートの乗り」は拍に合わせた上下動の深さです。0 にすると踊っているように
               見えなくなるので、少しは残しておくのがおすすめです。
+              「ダイナミクス」がキレを決めます。上げるほど速く動いて止まり、
+              行き過ぎてから戻り、振り幅と上下動も大きくなります。0 にすると
+              終始等速で動き続ける体操になります。
               「体の連鎖」は腰から手先へ動きが伝わる遅れの量です。0 だと全身が同時に
-              動いて人形のように見えます。上げるほど生き物らしくなりますが、
-              上げすぎると振りがぼやけます。
+              動いて人形のように見えます。
             </p>
           </div>
         </div>

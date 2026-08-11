@@ -254,22 +254,76 @@ describe("ポーズの取り出し", () => {
   });
 
   it("動きが飛ばない（ブロックの継ぎ目とループの継ぎ目を含む）", () => {
-    const step = 0.02;
-    let worst = 0;
-    let prev = sampleSkeleton(choreo, -step, { bounce: 0.6 }).pos;
-    for (let count = 0; count <= choreo.totalCounts; count += step) {
-      const cur = sampleSkeleton(choreo, count, { bounce: 0.6 }).pos;
-      for (const name of JOINT_NAMES) {
-        worst = Math.max(
-          worst,
-          Math.hypot(cur[name].x - prev[name].x, cur[name].y - prev[name].y, cur[name].z - prev[name].z),
-        );
+    // 速さそのものは制限しない（ダイナミクスを上げれば当然速くなる）。
+    // ここで見たいのは「一瞬だけ突出したコマ」＝ポーズが飛んだ跡があるか。
+    // 普段の速さ（99パーセンタイル）に対する最大コマの比で判定すると、
+    // 全体の速さが変わっても同じ基準で継ぎ目の破綻を捕まえられる。
+    const jumpRatio = (opts: { bounce: number; chain?: number; snap?: number }): number => {
+      const step = 0.02;
+      const steps: number[] = [];
+      let prev = sampleSkeleton(choreo, -step, opts).pos;
+      for (let count = 0; count <= choreo.totalCounts; count += step) {
+        const cur = sampleSkeleton(choreo, count, opts).pos;
+        let worst = 0;
+        for (const name of JOINT_NAMES) {
+          worst = Math.max(
+            worst,
+            Math.hypot(
+              cur[name].x - prev[name].x,
+              cur[name].y - prev[name].y,
+              cur[name].z - prev[name].z,
+            ),
+          );
+        }
+        steps.push(worst);
+        prev = cur;
       }
-      prev = cur;
+      steps.sort((a, b) => a - b);
+      const p99 = steps[Math.floor(steps.length * 0.99)];
+      return steps[steps.length - 1] / p99;
+    };
+
+    // 実測はどのダイナミクスでも 1.7 前後。繋ぎを外すと一気に跳ね上がる
+    for (const snap of [0, 0.75, 1]) {
+      expect(jumpRatio({ bounce: 0.6, chain: 0.6, snap })).toBeLessThan(3);
     }
-    // 0.02 カウントぶんの移動量。速い振りでも実測 0.08 程度に収まるのに対し、
-    // ブロックの繋ぎを外すと 0.67 まで跳ね上がる。その間に線を引いている。
-    expect(worst).toBeLessThan(REST_HEIGHT * 0.06);
+  });
+
+  it("ダイナミクスを上げると実際に速くなる", () => {
+    const peak = (snap: number): number => {
+      const step = 0.02;
+      let worst = 0;
+      let prev = sampleSkeleton(choreo, -step, { bounce: 0.6, snap }).pos;
+      for (let count = 0; count <= choreo.totalCounts; count += step) {
+        const cur = sampleSkeleton(choreo, count, { bounce: 0.6, snap }).pos;
+        for (const name of JOINT_NAMES) {
+          worst = Math.max(
+            worst,
+            Math.hypot(
+              cur[name].x - prev[name].x,
+              cur[name].y - prev[name].y,
+              cur[name].z - prev[name].z,
+            ),
+          );
+        }
+        prev = cur;
+      }
+      return worst;
+    };
+    // 実測で 2.5 倍以上。ここが効かないとスライダーが飾りになる
+    expect(peak(1)).toBeGreaterThan(peak(0) * 2);
+  });
+
+  it("ダイナミクスを上げても骨の長さは変わらない", () => {
+    // 行き過ぎ（オーバーシュート）は補間を 1 の外へ出すので、
+    // 角度の外挿になっていることを確かめる。位置で外挿すると手足が伸びる
+    const rest = boneLengths({});
+    for (const count of [1.1, 4.3, 9.7, 16.2, 24.4]) {
+      const lengths = boneLengths(samplePose(choreo, count, { bounce: 0.6, chain: 0.6, snap: 1 }));
+      for (const [name, value] of lengths) {
+        expect(value).toBeCloseTo(rest.get(name)!, 6);
+      }
+    }
   });
 
   it("バウンスを強くすると腰が沈む", () => {
@@ -497,9 +551,12 @@ describe("画角", () => {
     ]) {
       for (const seed of [1, 2, 3, 17]) {
         const choreo = generateChoreography(32, settings({ seed }));
-        const stage = createStage(width, height, choreo, { bounce: 0.6 });
-        for (let count = 0; count < choreo.totalCounts; count += 0.25) {
-          const bounds = frameBounds(sampleSkeleton(choreo, count, { bounce: 0.6 }), stage);
+        // 出荷時の設定で確かめる。オーバーシュートは補間を 1 の外へ出すので、
+        // 画角の走査と描画が同じ設定でないと、行き過ぎた瞬間に手足が切れる
+        const opts = { bounce: 0.6, chain: 0.6, snap: 1 };
+        const stage = createStage(width, height, choreo, opts);
+        for (let count = 0; count < choreo.totalCounts; count += 0.05) {
+          const bounds = frameBounds(sampleSkeleton(choreo, count, opts), stage);
           expect(bounds.minX).toBeGreaterThanOrEqual(-0.5);
           expect(bounds.minY).toBeGreaterThanOrEqual(-0.5);
           expect(bounds.maxX).toBeLessThanOrEqual(width + 0.5);
@@ -511,10 +568,11 @@ describe("画角", () => {
 
   it("必要以上に引かない（被写体が画面の半分以上を占める）", () => {
     const choreo = generateChoreography(32, settings({ seed: 5 }));
-    const stage = createStage(720, 1280, choreo, { bounce: 0.6 });
+    const opts = { bounce: 0.6, chain: 0.6, snap: 1 };
+    const stage = createStage(720, 1280, choreo, opts);
     let tallest = 0;
     for (let count = 0; count < choreo.totalCounts; count += 0.25) {
-      const bounds = frameBounds(sampleSkeleton(choreo, count, { bounce: 0.6 }), stage);
+      const bounds = frameBounds(sampleSkeleton(choreo, count, opts), stage);
       tallest = Math.max(tallest, bounds.maxY - bounds.minY);
     }
     expect(tallest).toBeGreaterThan(1280 * 0.5);

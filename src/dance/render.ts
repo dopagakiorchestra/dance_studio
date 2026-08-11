@@ -131,7 +131,10 @@ export function createStage(
   let vMin = Infinity;
   let vMax = -Infinity;
 
-  const step = 0.25;
+  // 走査は細かく取る。ダイナミクスを上げると動きが速くなり、粗い刻みでは
+  // 行き過ぎた一瞬の極値を跨いで見落とす。見落とすと本番でそのコマだけ
+  // 手足が画面外へ出る（0.25 刻みで実際に 2px はみ出した）。
+  const step = 0.05;
   const samples = Math.max(1, Math.ceil(choreo.totalCounts / step));
   for (let i = 0; i < samples; i++) {
     const skeleton = sampleSkeleton(choreo, i * step, opts);

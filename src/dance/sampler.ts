@@ -57,10 +57,24 @@ const MAX_DIP = 0.055;
  */
 const DROP_SHARE = 0.38;
 
+/** ダイナミクス最大のときに上下動を何倍まで深くするか。 */
+const BOUNCE_GAIN = 0.7;
+
 /** 太もも＋すねの長さ。しゃがみ角度の計算に使う。 */
 const LEG_SEGMENT = 0.44;
 
-function ease(kind: Ease | undefined, t: number): number {
+/**
+ * ダイナミクス最大のとき、キーフレーム間のどれだけを静止に回すか。
+ *
+ * キレは「速く動く」ではなく「速く動いて止まる」で作る。1カウントかけて
+ * 動き続けると、どれだけ鋭い曲線を使っても体操にしか見えない。
+ */
+const HOLD_SHARE = 0.55;
+
+/** 行き過ぎて戻る量。0 で行き過ぎなし。 */
+const OVERSHOOT = 1.7;
+
+function ease(kind: Ease | undefined, t: number, snap = 0): number {
   switch (kind) {
     case "linear":
       return t;
@@ -70,16 +84,25 @@ function ease(kind: Ease | undefined, t: number): number {
       // 目標のカウントに来るまで動かない。キメを保つときに使う
       return t >= 1 ? 1 : 0;
     case "out":
-    default:
-      // 速く入って落ち着く。ダンスの当て方に一番近い。
-      // 3乗にすると出だしがもっと鋭くなるが、手先の速度が上がりすぎて
-      // 映像変換にかけたときにフレーム間の整合が崩れるので、2.2乗に留めてある。
-      return 1 - Math.pow(1 - t, 2.2);
+    default: {
+      // 到達に使う割合。残りは静止に回る
+      const reach = 1 - HOLD_SHARE * snap;
+      const u = Math.min(1, t / reach);
+      // 速く入って落ち着く。snap を上げるほど出だしが鋭くなる
+      const sharp = 1 - Math.pow(1 - u, 2.2 + 1.8 * snap);
+      if (snap <= 0) return sharp;
+      // 行き過ぎてから戻る（アンティシペーションの裏返し）。
+      // 生き物の動きは目標でぴたりと止まらず、必ず少し越えて返ってくる
+      const c1 = OVERSHOOT * snap;
+      const c3 = c1 + 1;
+      const back = 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2);
+      return sharp + (back - sharp) * snap;
+    }
   }
 }
 
 /** パーツ内のローカルカウント位置のポーズ。範囲外は端のキーフレームで留める。 */
-function sampleMove(move: Move, localCount: number): Pose {
+function sampleMove(move: Move, localCount: number, snap: number): Pose {
   const frames = move.keyframes;
   if (frames.length === 0) return {};
   if (localCount <= frames[0].count) return frames[0].pose;
@@ -90,7 +113,7 @@ function sampleMove(move: Move, localCount: number): Pose {
     if (localCount < b.count) {
       const span = b.count - a.count;
       const t = span <= 0 ? 1 : (localCount - a.count) / span;
-      return blendPose(a.pose, b.pose, ease(b.ease, t));
+      return blendPose(a.pose, b.pose, ease(b.ease, t, snap));
     }
   }
   return frames[frames.length - 1].pose;
@@ -102,10 +125,10 @@ function sampleMove(move: Move, localCount: number): Pose {
  * 左右反転は補間の後にかけている。反転は成分の符号反転と関節名の入れ替えだけ
  * なので、補間と順序を入れ替えても結果は変わらない。
  */
-function samplePoseInBlock(block: ChoreoBlock, localCount: number): Pose {
+function samplePoseInBlock(block: ChoreoBlock, localCount: number, snap: number): Pose {
   const move = getMove(block.moveId);
   if (!move) return {};
-  const pose = sampleMove(move, localCount);
+  const pose = sampleMove(move, localCount, snap);
   return block.mirrored ? mirrorPose(pose) : pose;
 }
 
@@ -144,9 +167,10 @@ function bounceDip(beatPhase: number): number {
   return 0.5 - 0.5 * Math.cos(Math.PI * ((beatPhase - rise) / DROP_SHARE));
 }
 
-function applyBounce(pose: Pose, beatPhase: number, amount: number): Pose {
+function applyBounce(pose: Pose, beatPhase: number, amount: number, snap = 0): Pose {
   if (amount <= 0) return pose;
-  const dip = MAX_DIP * amount * bounceDip(beatPhase);
+  // ダイナミクスを上げるほど深く沈む
+  const dip = MAX_DIP * (1 + BOUNCE_GAIN * snap) * amount * bounceDip(beatPhase);
   if (dip <= 0.0005) return pose;
 
   const cos = Math.min(1, Math.max(-1, 1 - dip / (2 * LEG_SEGMENT)));
@@ -245,11 +269,46 @@ function softenElbows(pose: Pose): Pose {
   return touched ? { root: pose.root, j } : pose;
 }
 
+/**
+ * ダイナミクスで振り幅を広げる関節。
+ *
+ * 脚・腰・root は触らない。weight() が足の位置を角度で打ち消していたり、
+ * turnHalf が hips の回転量そのものでターンを作っていたりするので、
+ * 一律に倍率をかけると足が地面を離れたり回転角が変わったりする。
+ */
+const AMPLIFY: JointName[] = [
+  "spine", "chest", "neck", "head", "headTop",
+  "upperArmL", "forearmL", "handL", "handTipL",
+  "upperArmR", "forearmR", "handR", "handTipR",
+];
+
+/**
+ * ダイナミクス最大のときの振り幅の倍率。
+ *
+ * 上げるほど大ぶりになるが、画角は振り付け全体の極値に合わせて引くので、
+ * 上げすぎると被写体が小さくなる（＝変換に渡せる情報が減る）。
+ * 縦 9:16 で占有率が 50% を割らない範囲の上限として決めた。
+ */
+const AMPLIFY_MAX = 1.22;
+
+function amplify(pose: Pose, snap: number): Pose {
+  if (snap <= 0) return pose;
+  const k = 1 + (AMPLIFY_MAX - 1) * snap;
+  const j: Partial<Record<JointName, Rot>> = { ...pose.j };
+  for (const name of AMPLIFY) {
+    const r = j[name];
+    if (r) j[name] = [r[0] * k, r[1] * k, r[2] * k];
+  }
+  return { root: pose.root, j };
+}
+
 export interface SampleOptions {
   /** 上下動の強さ 0..1。 */
   bounce: number;
   /** 体の連鎖の強さ 0..1。省略時は連鎖なし。 */
   chain?: number;
+  /** ダイナミクス 0..1。到達を早めて静止を作り、行き過ぎと振り幅を足す。 */
+  snap?: number;
 }
 
 /**
@@ -257,15 +316,18 @@ export interface SampleOptions {
  * countPos はループ長で自動的に巻き戻すので、何拍目でも渡してよい。
  */
 /** そのブロックに接する境界で使う繋ぎ幅。キメだけ狭くする。 */
-function blendHalfFor(block: ChoreoBlock): number {
-  return getMove(block.moveId)?.accent ? ACCENT_BLEND_HALF : BLEND_HALF;
+function blendHalfFor(block: ChoreoBlock, snap: number): number {
+  const base = getMove(block.moveId)?.accent ? ACCENT_BLEND_HALF : BLEND_HALF;
+  // ダイナミクスを上げるほど繋ぎを詰める。長いクロスフェードは
+  // ブロックの頭と尻を丸めてしまい、振りの角が消える
+  return base * (1 - 0.55 * snap);
 }
 
 /**
  * ブロックの繋ぎまで含めた、ある時刻の振り付けのポーズ。
  * バウンスと体の連鎖はここには入らない。
  */
-function choreoPoseAt(choreo: Choreography, pos: number): Pose {
+function choreoPoseAt(choreo: Choreography, pos: number, snap: number): Pose {
   const blocks = choreo.blocks;
   const index = findBlockIndex(blocks, pos);
   const block = blocks[index];
@@ -276,20 +338,20 @@ function choreoPoseAt(choreo: Choreography, pos: number): Pose {
   // 繋ぎの幅は境界の両側で同じ値でなければならない。境界に入っていく側の
   // ブロックで決めると、どちらから見ても同じ値になる。
   // 短いブロックに合わせて縮めるのも従来どおり。
-  const halfIn = Math.min(blendHalfFor(block), block.counts / 2, prev.counts / 2);
-  const halfOut = Math.min(blendHalfFor(next), block.counts / 2, next.counts / 2);
+  const halfIn = Math.min(blendHalfFor(block, snap), block.counts / 2, prev.counts / 2);
+  const halfOut = Math.min(blendHalfFor(next, snap), block.counts / 2, next.counts / 2);
 
-  const pose = samplePoseInBlock(block, local);
+  const pose = samplePoseInBlock(block, local, snap);
 
   if (local < halfIn) {
     // 境界の後ろ半分。前のブロックは終わりのポーズで止まっている。
     // 先頭ブロックの1つ前は最後のブロックなので、ループの継ぎ目もここで繋がる。
-    const from = samplePoseInBlock(prev, prev.counts + local);
+    const from = samplePoseInBlock(prev, prev.counts + local, snap);
     return blendPose(from, pose, ease("inout", 0.5 + local / (2 * halfIn)));
   }
   if (local > block.counts - halfOut) {
     // 境界の手前半分。次のブロックは頭のポーズで待っている
-    const to = samplePoseInBlock(next, local - block.counts);
+    const to = samplePoseInBlock(next, local - block.counts, snap);
     const t = (local - (block.counts - halfOut)) / (2 * halfOut);
     return blendPose(pose, to, ease("inout", t));
   }
@@ -307,13 +369,19 @@ function wrap(countPos: number, total: number): number {
  * 腰（段 0）が今の時刻、手先（段 4）が一番過去を見る。関節の回転を
  * 差し替えるだけなので、骨の長さは変わらない。
  */
-function chainedPose(choreo: Choreography, pos: number, total: number, chain: number): Pose {
-  const base = choreoPoseAt(choreo, pos);
+function chainedPose(
+  choreo: Choreography,
+  pos: number,
+  total: number,
+  chain: number,
+  snap: number,
+): Pose {
+  const base = choreoPoseAt(choreo, pos, snap);
   if (chain <= 0) return base;
 
   const j = { ...base.j };
   for (const tier of CHAIN_TIERS) {
-    const lagged = choreoPoseAt(choreo, wrap(pos - CHAIN_STEP * tier.steps * chain, total));
+    const lagged = choreoPoseAt(choreo, wrap(pos - CHAIN_STEP * tier.steps * chain, total), snap);
     for (const name of tier.joints) {
       const rot = lagged.j?.[name];
       // 遅れた側に指定が無ければ回転 0。base の値を残すと連鎖が崩れる
@@ -333,9 +401,10 @@ export function samplePose(
 
   const total = choreo.totalCounts;
   const pos = wrap(countPos, total);
-  const pose = softenElbows(chainedPose(choreo, pos, total, opts.chain ?? 0));
+  const snap = opts.snap ?? 0;
+  const pose = softenElbows(amplify(chainedPose(choreo, pos, total, opts.chain ?? 0, snap), snap));
 
-  return applyBounce(pose, pos - Math.floor(pos), opts.bounce);
+  return applyBounce(pose, pos - Math.floor(pos), opts.bounce, snap);
 }
 
 /** ポーズを解いてワールド座標まで求める。描画側の入口。 */

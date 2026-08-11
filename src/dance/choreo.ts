@@ -53,6 +53,14 @@ export interface DanceSettings {
    */
   chain: number;
   /**
+   * ダイナミクス 0..1。
+   *
+   * 上げるほど「速く動いて止まる」に寄る。到達を早めて残りを静止に回し、
+   * 行き過ぎてから戻り、上下動と腕の振りも大きくなる。
+   * キレはここで作る。0 にすると終始等速で動き続ける体操になる。
+   */
+  snap: number;
+  /**
    * ブロックごとの手動指定。長さはブロック数と一致しなくてよく、
    * 範囲外や未指定（null）のブロックは自動生成に任せる。
    */
@@ -69,6 +77,7 @@ export const DEFAULT_DANCE: DanceSettings = {
   intensity: 0.7,
   bounce: 0.6,
   chain: 0.6,
+  snap: 0.75,
   overrides: [],
 };
 
@@ -247,6 +256,7 @@ export function normalizeDance(raw: unknown): DanceSettings {
     intensity: num(o.intensity, 0, 1, DEFAULT_DANCE.intensity),
     bounce: num(o.bounce, 0, 1, DEFAULT_DANCE.bounce),
     chain: num(o.chain, 0, 1, DEFAULT_DANCE.chain),
+    snap: num(o.snap, 0, 1, DEFAULT_DANCE.snap),
     overrides,
   };
 }
