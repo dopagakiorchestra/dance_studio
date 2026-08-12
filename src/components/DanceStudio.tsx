@@ -11,6 +11,8 @@ import { blockLabel, generateChoreography, withOverride, type DanceSettings } fr
 import { MOVES, type Mood } from "../dance/moves";
 import { createStage, drawFrame, getPalette, PALETTES, type DrawMode } from "../dance/render";
 import { sampleSkeleton } from "../dance/sampler";
+import { CAPTURE_FPS, CaptureAborted, captureMotion, MAX_SECONDS } from "../dance/capture";
+import { clipSeconds, type MotionClip } from "../dance/landmarks";
 import {
   FRAME_RATES,
   getVideoSize,
@@ -85,6 +87,19 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   const [previewRunning, setPreviewRunning] = useState(true);
   const [floor, setFloor] = useState(false);
   const [drawMode, setDrawMode] = useState<DrawMode>("depth");
+  /**
+   * 動画から取り込んだ動き。
+   *
+   * localStorage にも共有リンクにも入れていない。300コマぶんの関節角度で
+   * 数百KB になり、リンクに載せると開けない長さになる。読み込み直したら
+   * 取り込みし直す。
+   */
+  const [clip, setClip] = useState<MotionClip | null>(null);
+  const [useClip, setUseClip] = useState(false);
+  const [capture, setCapture] = useState<
+    { kind: "idle" } | { kind: "working"; ratio: number; note: string } | { kind: "error"; message: string }
+  >({ kind: "idle" });
+  const captureAbort = useRef<AbortController | null>(null);
 
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const exportRef = useRef<HTMLCanvasElement | null>(null);
@@ -115,6 +130,18 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
 
   const choreo = useMemo(() => generateChoreography(loopBeats, dance), [loopBeats, dance]);
 
+  /**
+   * 実際に描くもとになる動き。取り込んだ動きを使うときはそちら。
+   *
+   * クリップの長さは秒で決まっているので、BPM が変わるたびにカウントへ
+   * 換算し直す（尺は同じで、何拍ぶんに当たるかが変わる）。
+   */
+  const source = useMemo(() => {
+    if (!useClip || !clip) return choreo;
+    return { ...clip, totalCounts: clipSeconds(clip) / beatSeconds };
+  }, [useClip, clip, choreo, beatSeconds]);
+  const loopCounts = source.totalCounts;
+
   // プレビューは書き出しと同じ縦横比にする。見えているものがそのまま出るように
   const previewSize = useMemo(() => {
     const scale = Math.min(1, PREVIEW_MAX_HEIGHT / size.height);
@@ -122,8 +149,8 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   }, [size]);
 
   const previewStage = useMemo(
-    () => createStage(previewSize.width, previewSize.height, choreo, sampleOpts),
-    [previewSize, choreo, sampleOpts],
+    () => createStage(previewSize.width, previewSize.height, source, sampleOpts),
+    [previewSize, source, sampleOpts],
   );
 
   const drawOptions = useMemo(
@@ -163,13 +190,13 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         countPos = 0;
       }
 
-      const skeleton = sampleSkeleton(choreo, countPos, live.opts);
+      const skeleton = sampleSkeleton(source, countPos, live.opts);
       drawFrame(ctx, skeleton, previewStage, drawOptions);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [choreo, previewStage, drawOptions, previewRunning]);
+  }, [source, previewStage, drawOptions, previewRunning]);
 
   const patch = useCallback(
     (next: Partial<DanceSettings>) => onChange({ ...dance, ...next }),
@@ -204,6 +231,41 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     [choreo, dance.styles],
   );
 
+  const handleVideo = useCallback(
+    async (file?: File) => {
+      if (!file) return;
+      const controller = new AbortController();
+      captureAbort.current = controller;
+      setCapture({ kind: "working", ratio: 0, note: "" });
+      try {
+        const result = await captureMotion({
+          file,
+          legs: project.body.legs,
+          secondsPerBeat: beatSeconds,
+          signal: controller.signal,
+          onProgress: (ratio, note) => setCapture({ kind: "working", ratio, note }),
+        });
+        setClip(result);
+        setUseClip(true);
+        setCapture({ kind: "idle" });
+      } catch (err) {
+        if (err instanceof CaptureAborted) {
+          setCapture({ kind: "idle" });
+          return;
+        }
+        setCapture({
+          kind: "error",
+          message: err instanceof Error ? err.message : "取り込めませんでした。",
+        });
+      } finally {
+        captureAbort.current = null;
+      }
+    },
+    [beatSeconds, project.body.legs],
+  );
+
+  useEffect(() => () => captureAbort.current?.abort(), []);
+
   const videoFormat = useMemo(() => pickVideoFormat(), []);
   const canRecord =
     videoFormat !== null &&
@@ -224,10 +286,10 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     setExportState({ kind: "working", ratio: 0 });
 
     try {
-      const stage = createStage(size.width, size.height, choreo, sampleOpts);
+      const stage = createStage(size.width, size.height, source, sampleOpts);
       const result = await recordDance({
         canvas,
-        choreo,
+        choreo: source,
         stage,
         draw: { palette, body: project.body, floor, mode: drawMode },
         bounce: dance.bounce,
@@ -237,7 +299,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         follow: dance.follow,
         body: project.body,
         secondsPerBeat: beatSeconds,
-        totalBeats: loopBeats * project.repeats,
+        totalBeats: loopCounts * project.repeats,
         fps,
         signal: controller.signal,
         onProgress: (ratio) => setExportState({ kind: "working", ratio }),
@@ -265,7 +327,8 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   }, [
     canRecord,
     size,
-    choreo,
+    source,
+    loopCounts,
     sampleOpts,
     dance.bounce,
     dance.groove,
@@ -560,7 +623,63 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
       </section>
 
       <section className="panel">
+        <h2>動画から動きを取り込む</h2>
+        <p className="hint">
+          踊っている動画を読み込むと、その動きをモデルに移します。
+          {" "}<strong>全身が入っていて、1人だけ写っていて、明るい</strong>ものほどよく取れます。
+          取り込むのは最初の {MAX_SECONDS} 秒までで、{CAPTURE_FPS}fps で拾います。
+          コマごとに送りながら推定するので、実時間より時間がかかります。
+        </p>
+        <input
+          type="file"
+          accept="video/*"
+          disabled={capture.kind === "working"}
+          onChange={(e) => void handleVideo(e.target.files?.[0])}
+        />
+        {capture.kind === "working" && (
+          <p className="hint">
+            取り込み中… {Math.round(capture.ratio * 100)}% {capture.note}
+            {" "}
+            <button className="btn small" onClick={() => captureAbort.current?.abort()}>
+              中止
+            </button>
+          </p>
+        )}
+        {capture.kind === "error" && <p className="hint warn">{capture.message}</p>}
+        {clip && (
+          <>
+            <p className="hint">
+              「{clip.name}」／ {clipSeconds(clip).toFixed(1)} 秒 ・ {clip.frames.length} コマ ／
+              {" "}検出 {clip.detected} コマ
+              {clip.missed > 0 && `（${clip.missed} コマは取れず、直前のコマで埋めました）`}
+            </p>
+            <div className="row">
+              <button className="btn" onClick={() => setUseClip(false)} disabled={!useClip}>
+                自動生成の振り付けを使う
+              </button>
+              <button className="btn" onClick={() => setUseClip(true)} disabled={useClip}>
+                取り込んだ動きを使う
+              </button>
+            </div>
+          </>
+        )}
+        {useClip && (
+          <p className="hint warn">
+            取り込んだ動きを再生中です。ノリ・ダイナミクス・追従・体の連鎖は掛かりません
+            （手作りの振りを生き物に見せるための処理なので、本物の動きに足すと二重になります）。
+            接地だけは掛けています。
+            {" "}<strong>取り込んだ動きは保存されません。</strong>ページを開き直すと消えます。
+          </p>
+        )}
+      </section>
+
+      <section className="panel">
         <h2>振り付けの中身</h2>
+        {useClip && (
+          <p className="hint warn">
+            いまは取り込んだ動きを再生しています。ここでの選択は反映されません。
+          </p>
+        )}
         <p className="hint">
           1小節ごとに振りを差し替えられます。気に入らないところだけ選び直してください。
           手で選んだ小節は、引き直してもそのまま残ります。

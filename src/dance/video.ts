@@ -12,6 +12,7 @@
 
 import { readMp4SampleEntry } from "../mp4";
 import type { Choreography } from "./choreo";
+import type { MotionClip } from "./landmarks";
 import { drawFrame, type DrawOptions, type Stage } from "./render";
 import { sampleSkeleton } from "./sampler";
 import type { Body } from "./skeleton";
@@ -77,7 +78,7 @@ export type FrameRate = (typeof FRAME_RATES)[number];
 
 export interface RecordDanceOptions {
   canvas: HTMLCanvasElement;
-  choreo: Choreography;
+  choreo: Choreography | MotionClip;
   stage: Stage;
   draw: DrawOptions;
   bounce: number;

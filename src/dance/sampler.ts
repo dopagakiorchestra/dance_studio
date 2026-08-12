@@ -15,6 +15,7 @@
 import { getMove, type Ease, type Move } from "./moves";
 import type { ChoreoBlock, Choreography } from "./choreo";
 import { plantFeet } from "./ground";
+import { clipPoseAt, type MotionClip } from "./landmarks";
 import {
   blendPose,
   DEFAULT_BODY,
@@ -628,11 +629,15 @@ export function samplePose(
  * しておきたいので、床の都合を混ぜない。
  */
 export function sampleSkeleton(
-  choreo: Choreography,
+  source: Choreography | MotionClip,
   countPos: number,
   opts?: SampleOptions,
 ): PosedSkeleton {
   const body = opts?.body ?? DEFAULT_BODY;
-  const pose = samplePose(choreo, countPos, opts);
+  // 取り込んだ動きには味付けを掛けない。ノリもキレも追従も、手作りのパーツを
+  // 生き物に見せるための処理で、本物の動きに足すと二重になる。接地だけは
+  // 掛ける（推定は足の位置を正確には出さないので、これが無いと足が浮く）
+  const pose =
+    "frames" in source ? clipPoseAt(source, countPos) : samplePose(source, countPos, opts);
   return solvePose(opts?.ground === false ? pose : plantFeet(pose, body), body);
 }

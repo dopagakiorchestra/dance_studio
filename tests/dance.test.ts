@@ -11,6 +11,7 @@ import {
 import { getMove, MOVES } from "../src/dance/moves";
 import { createStage, frameBounds } from "../src/dance/render";
 import { plantFeet } from "../src/dance/ground";
+import { LM, poseFromLandmarks, smoothPoses, type Landmark } from "../src/dance/landmarks";
 import { samplePose, sampleSkeleton, type SampleOptions } from "../src/dance/sampler";
 import {
   DEFAULT_BODY,
@@ -1333,5 +1334,145 @@ describe("画角", () => {
       tallest = Math.max(tallest, bounds.maxY - bounds.minY);
     }
     expect(tallest).toBeGreaterThan(1280 * 0.5);
+  });
+});
+
+
+describe("動画からの取り込み（リターゲット）", () => {
+  /**
+   * こちらの骨格から MediaPipe 相当の点群を作る。
+   *
+   * 推定器を通さずにリターゲットだけを検算するための道具。答えが分かっている
+   * ポーズから点群を作って戻せば、座標系の取り違えや軸のずれが一発で出る。
+   */
+  function fakeLandmarks(sk: ReturnType<typeof solvePose>): Landmark[] {
+    const p = sk.pos;
+    const hipMid = {
+      x: (p.thighL.x + p.thighR.x) / 2,
+      y: (p.thighL.y + p.thighR.y) / 2,
+      z: (p.thighL.z + p.thighR.z) / 2,
+    };
+    const out: Landmark[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0, visibility: 1 }));
+    // こちらの座標 → MediaPipe の座標（y と z が逆、腰の中点が原点）
+    const put = (i: number, v: { x: number; y: number; z: number }): void => {
+      out[i] = { x: v.x - hipMid.x, y: -(v.y - hipMid.y), z: -(v.z - hipMid.z), visibility: 1 };
+    };
+    put(LM.shoulderL, p.upperArmL);
+    put(LM.shoulderR, p.upperArmR);
+    put(LM.elbowL, p.forearmL);
+    put(LM.elbowR, p.forearmR);
+    put(LM.wristL, p.handL);
+    put(LM.wristR, p.handR);
+    put(LM.indexL, p.handTipL);
+    put(LM.indexR, p.handTipR);
+    put(LM.pinkyL, p.knuckleL);
+    put(LM.pinkyR, p.knuckleR);
+    put(LM.hipL, p.thighL);
+    put(LM.hipR, p.thighR);
+    put(LM.kneeL, p.shinL);
+    put(LM.kneeR, p.shinR);
+    put(LM.ankleL, p.footL);
+    put(LM.ankleR, p.footR);
+    put(LM.toeL, p.toeL);
+    put(LM.toeR, p.toeR);
+
+    const R = sk.rot.head;
+    const ax = (v: { x: number; y: number; z: number }) => ({
+      x: R[0] * v.x + R[1] * v.y + R[2] * v.z,
+      y: R[3] * v.x + R[4] * v.y + R[5] * v.z,
+      z: R[6] * v.x + R[7] * v.y + R[8] * v.z,
+    });
+    const hc = {
+      x: (p.head.x + p.headTop.x) / 2,
+      y: (p.head.y + p.headTop.y) / 2,
+      z: (p.head.z + p.headTop.z) / 2,
+    };
+    const fwd = ax({ x: 0, y: 0, z: 1 });
+    const sideH = ax({ x: 1, y: 0, z: 0 });
+    put(LM.nose, { x: hc.x + fwd.x * 0.11, y: hc.y + fwd.y * 0.11, z: hc.z + fwd.z * 0.11 });
+    put(LM.earL, { x: hc.x + sideH.x * 0.08, y: hc.y + sideH.y * 0.08, z: hc.z + sideH.z * 0.08 });
+    put(LM.earR, { x: hc.x - sideH.x * 0.08, y: hc.y - sideH.y * 0.08, z: hc.z - sideH.z * 0.08 });
+    return out;
+  }
+
+  const choreo = generateChoreography(32, DEFAULT_DANCE);
+  const opts = { bounce: 0.5, chain: 0.6, snap: 0.75, groove: 0.4, follow: 0.35 };
+  const CHECK: JointName[] = [
+    "upperArmL", "forearmL", "handL", "upperArmR", "forearmR", "handR",
+    "thighL", "shinL", "footL", "toeL", "thighR", "shinR", "footR", "toeR",
+    "chest", "neck", "head", "headTop",
+  ];
+
+  /** 元のポーズと、点群にして戻したポーズの、関節位置の差（腰を揃えて比べる）。 */
+  function roundTripError(count: number): Map<JointName, number> {
+    const orig = solvePose(samplePose(choreo, count, opts), DEFAULT_BODY);
+    const back = poseFromLandmarks(fakeLandmarks(orig));
+    const got = solvePose(back!, DEFAULT_BODY);
+    const o0 = orig.pos.hips;
+    const g0 = got.pos.hips;
+    const out = new Map<JointName, number>();
+    for (const n of CHECK) {
+      out.set(
+        n,
+        Math.hypot(
+          orig.pos[n].x - o0.x - (got.pos[n].x - g0.x),
+          orig.pos[n].y - o0.y - (got.pos[n].y - g0.y),
+          orig.pos[n].z - o0.z - (got.pos[n].z - g0.z),
+        ),
+      );
+    }
+    return out;
+  }
+
+  it("点群にして戻すと、ほぼ元のポーズに戻る", () => {
+    // 座標系を取り違えていれば、ここが身長の何十%にもなって即座に落ちる。
+    // 残る差は胴と首の再現（腰・肩の4点から背骨4本＋首＋頭を復元しているぶん）。
+    // 一番大きいのが頭頂で 7.5%、手足は 4% 前後、脚は 2.2%
+    let worst = 0;
+    for (let count = 0; count < 32; count += 0.5) {
+      for (const d of roundTripError(count).values()) worst = Math.max(worst, d);
+    }
+    expect(worst / REST_HEIGHT).toBeLessThan(0.08);
+  });
+
+  it("足の向きが引き継がれる（骨の休めの向きを取り違えていない）", () => {
+    // 足首→つま先だけは前向きに伸びている。-Y だと思って組むと 77 度ずれ、
+    // つま先が身長の 15% ずれていた
+    let worst = 0;
+    for (let count = 0; count < 32; count += 0.5) {
+      const e = roundTripError(count);
+      worst = Math.max(worst, e.get("toeL")!, e.get("toeR")!);
+    }
+    expect(worst).toBeLessThan(0.06);
+  });
+
+  it("点が足りない・隠れているコマは捨てる", () => {
+    expect(poseFromLandmarks([])).toBeNull();
+    const hidden = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0, visibility: 0.1 }));
+    expect(poseFromLandmarks(hidden)).toBeNull();
+  });
+
+  it("骨盤は上体の傾きに付いていきすぎない", () => {
+    // 「腰の中点→肩の中点」をそのまま骨盤の上向きにすると、上体を前に倒した
+    // だけで骨盤ごと回り、脚が後ろへ振れる。脚の誤差でそれを見る
+    let worstLeg = 0;
+    for (let count = 0; count < 32; count += 0.5) {
+      const e = roundTripError(count);
+      for (const n of ["thighL", "shinL", "footL", "thighR", "shinR", "footR"] as JointName[]) {
+        worstLeg = Math.max(worstLeg, e.get(n)!);
+      }
+    }
+    expect(worstLeg / REST_HEIGHT).toBeLessThan(0.03);
+  });
+
+  it("均しても骨の長さは変わらない", () => {
+    // 位置ではなく角度で均しているので、均しても手足は伸び縮みしない
+    const raw = [0, 1, 2, 3, 4].map((c) => samplePose(choreo, c, opts));
+    const rest = boneLengths({});
+    for (const pose of smoothPoses(raw, 3)) {
+      for (const [name, value] of boneLengths(pose)) {
+        expect(value).toBeCloseTo(rest.get(name)!, 6);
+      }
+    }
   });
 });

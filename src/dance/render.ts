@@ -13,6 +13,7 @@
 
 import type { Choreography } from "./choreo";
 import { drawDepthFrame } from "./depth";
+import type { MotionClip } from "./landmarks";
 import { sampleSkeleton, type SampleOptions } from "./sampler";
 import {
   DEFAULT_BODY,
@@ -130,7 +131,7 @@ function normalize(p: Vec3): { u: number; v: number; d: number } {
 export function createStage(
   width: number,
   height: number,
-  choreo: Choreography,
+  source: Choreography | MotionClip,
   opts: SampleOptions,
 ): Stage {
   let uMin = Infinity;
@@ -145,9 +146,9 @@ export function createStage(
   // 手足が画面外へ出る（0.25 刻みで実際に 2px はみ出した）。
   const radius = jointRadiusOf(opts.body ?? DEFAULT_BODY);
   const step = 0.05;
-  const samples = Math.max(1, Math.ceil(choreo.totalCounts / step));
+  const samples = Math.max(1, Math.ceil(source.totalCounts / step));
   for (let i = 0; i < samples; i++) {
-    const skeleton = sampleSkeleton(choreo, i * step, opts);
+    const skeleton = sampleSkeleton(source, i * step, opts);
     for (const name of JOINT_NAMES) {
       const { u, v, d } = normalize(skeleton.pos[name]);
       const r = radius[name] ?? 0;
