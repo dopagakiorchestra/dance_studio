@@ -43,7 +43,8 @@ function boneLengths(pose: Pose, body?: Body): Map<string, number> {
     ["upperArmL", "forearmL"],
     ["forearmL", "handL"],
     ["thighL", "shinL"],
-    ["shinL", "footL"],
+    ["shinL", "calfL"],
+    ["calfL", "footL"],
     ["thighR", "shinR"],
   ];
   const out = new Map<string, number>();
@@ -602,6 +603,44 @@ describe("肘", () => {
       peak = Math.max(peak, elbowAngle(pose, "L"), elbowAngle(pose, "R"));
     }
     expect(peak).toBeGreaterThan(100);
+  });
+});
+
+describe("体のシルエット", () => {
+  const limb = (from: JointName, to: JointName): { r0: number; r1: number } => {
+    const found = LIMBS.find((l) => l.from === from && l.to === to);
+    expect(found).toBeDefined();
+    return found!;
+  };
+
+  it("胸と骨盤より腰が細い（筒に見えないため）", () => {
+    // 同じ太さで積むと筒になり、人の体として読めなくなる。
+    // くびれがあるかどうかがシルエットの決め手
+    const pelvis = limb("hips", "spine").r0;
+    const waist = limb("hips", "spine").r1;
+    const chest = limb("spine", "chest").r1;
+    expect(waist).toBeLessThan(pelvis * 0.85);
+    expect(waist).toBeLessThan(chest * 0.75);
+    // 腰の上下で太さが繋がっていること（段差があると分割線が見える）
+    expect(limb("spine", "chest").r0).toBeCloseTo(waist, 6);
+  });
+
+  it("肩が腰より広い", () => {
+    expect(limb("chest", "upperArmL").r0).toBeGreaterThan(limb("hips", "spine").r1);
+  });
+
+  it("ふくらはぎが膝下でいったん太くなる", () => {
+    // 膝から足首まで一直線に細くすると脚が棒に見える
+    const knee = limb("shinL", "calfL").r0;
+    const calf = limb("shinL", "calfL").r1;
+    const ankle = limb("calfL", "footL").r1;
+    expect(calf).toBeGreaterThan(knee);
+    expect(ankle).toBeLessThan(calf * 0.6);
+  });
+
+  it("足先を尖らせない（つま先立ちに見えるため）", () => {
+    const toe = limb("footL", "toeL");
+    expect(toe.r1).toBeGreaterThan(toe.r0 * 0.65);
   });
 });
 

@@ -43,10 +43,12 @@ export type JointName =
   | "handTipR"
   | "thighL"
   | "shinL"
+  | "calfL"
   | "footL"
   | "toeL"
   | "thighR"
   | "shinR"
+  | "calfR"
   | "footR"
   | "toeR";
 
@@ -85,13 +87,17 @@ const JOINTS: JointDef[] = [
 
   { name: "thighL", parent: "hips", offset: { x: 0.115, y: -0.04, z: 0 } },
   { name: "shinL", parent: "thighL", offset: { x: 0, y: -0.45, z: 0 } },
-  { name: "footL", parent: "shinL", offset: { x: 0, y: -0.43, z: 0 } },
-  { name: "toeL", parent: "footL", offset: { x: 0, y: -0.04, z: 0.15 } },
+  // ふくらはぎの膨らみを作るための中間点。膝から足首まで一直線に細くすると
+  // 脚が棒に見える
+  { name: "calfL", parent: "shinL", offset: { x: 0, y: -0.15, z: 0 } },
+  { name: "footL", parent: "calfL", offset: { x: 0, y: -0.28, z: 0 } },
+  { name: "toeL", parent: "footL", offset: { x: 0, y: -0.042, z: 0.17 } },
 
   { name: "thighR", parent: "hips", offset: { x: -0.115, y: -0.04, z: 0 } },
   { name: "shinR", parent: "thighR", offset: { x: 0, y: -0.45, z: 0 } },
-  { name: "footR", parent: "shinR", offset: { x: 0, y: -0.43, z: 0 } },
-  { name: "toeR", parent: "footR", offset: { x: 0, y: -0.04, z: 0.15 } },
+  { name: "calfR", parent: "shinR", offset: { x: 0, y: -0.15, z: 0 } },
+  { name: "footR", parent: "calfR", offset: { x: 0, y: -0.28, z: 0 } },
+  { name: "toeR", parent: "footR", offset: { x: 0, y: -0.042, z: 0.17 } },
 ];
 
 export const JOINT_NAMES: JointName[] = JOINTS.map((j) => j.name);
@@ -119,7 +125,10 @@ export interface Body {
 export const DEFAULT_BODY: Body = { head: 1, legs: 1, arms: 1, build: 1, shoulders: 1 };
 
 /** 脚の長さに関わる関節（親からの距離が脚の長さを作る）。 */
-const LEG_JOINTS = new Set<JointName>(["thighL", "shinL", "footL", "toeL", "thighR", "shinR", "footR", "toeR"]);
+const LEG_JOINTS = new Set<JointName>([
+  "thighL", "shinL", "calfL", "footL", "toeL",
+  "thighR", "shinR", "calfR", "footR", "toeR",
+]);
 
 /** 腕の長さに関わる関節。 */
 const ARM_JOINTS = new Set<JointName>([
@@ -190,6 +199,7 @@ const MIRROR_PAIRS: Array<[JointName, JointName]> = [
   ["handTipL", "handTipR"],
   ["thighL", "thighR"],
   ["shinL", "shinR"],
+  ["calfL", "calfR"],
   ["footL", "footR"],
   ["toeL", "toeR"],
 ];
@@ -386,34 +396,40 @@ export interface Limb {
  * （尖らせると刃物のように見える）。
  */
 export const LIMBS: Limb[] = [
-  { from: "hips", to: "spine", r0: 0.115, r1: 0.12 },
-  { from: "spine", to: "chest", r0: 0.12, r1: 0.13 },
-  // 首は太めにして頭の球に届かせる。細いと頭が浮いて見えるが、
+  // 胴は「骨盤 → くびれ → 胸郭」で太さを変える。同じ太さで積むと筒に見えて、
+  // 人の体だと読めなくなる。くびれと肩幅の差がシルエットの決め手
+  { from: "hips", to: "spine", r0: 0.128, r1: 0.097 },
+  { from: "spine", to: "chest", r0: 0.097, r1: 0.152 },
+  // 首は太めにして頭に届かせる。細いと頭が浮いて見えるが、
   // head まで伸ばすと顔の下半分に首がかぶるので、neck で止めて太さで繋ぐ
-  { from: "chest", to: "neck", r0: 0.078, r1: 0.068 },
+  { from: "chest", to: "neck", r0: 0.086, r1: 0.056 },
 
-  { from: "chest", to: "upperArmL", r0: 0.1, r1: 0.075 },
-  { from: "upperArmL", to: "forearmL", r0: 0.065, r1: 0.05 },
-  { from: "forearmL", to: "handL", r0: 0.05, r1: 0.04 },
+  // 肩（三角筋）。胸から腕の付け根まで太く出すと肩のラインが立つ
+  { from: "chest", to: "upperArmL", r0: 0.129, r1: 0.076 },
+  { from: "upperArmL", to: "forearmL", r0: 0.068, r1: 0.049 },
+  { from: "forearmL", to: "handL", r0: 0.052, r1: 0.039 },
   { from: "handL", to: "knuckleL", r0: 0.048, r1: 0.046 },
   { from: "knuckleL", to: "handTipL", r0: 0.044, r1: 0.028 },
 
-  { from: "chest", to: "upperArmR", r0: 0.1, r1: 0.075 },
-  { from: "upperArmR", to: "forearmR", r0: 0.065, r1: 0.05 },
-  { from: "forearmR", to: "handR", r0: 0.05, r1: 0.04 },
+  { from: "chest", to: "upperArmR", r0: 0.129, r1: 0.076 },
+  { from: "upperArmR", to: "forearmR", r0: 0.068, r1: 0.049 },
+  { from: "forearmR", to: "handR", r0: 0.052, r1: 0.039 },
   { from: "handR", to: "knuckleR", r0: 0.048, r1: 0.046 },
   { from: "knuckleR", to: "handTipR", r0: 0.044, r1: 0.028 },
 
-  { from: "hips", to: "thighL", r0: 0.105, r1: 0.095 },
-  { from: "thighL", to: "shinL", r0: 0.095, r1: 0.068 },
-  { from: "shinL", to: "footL", r0: 0.068, r1: 0.048 },
-  { from: "footL", to: "toeL", r0: 0.05, r1: 0.045 },
+  { from: "hips", to: "thighL", r0: 0.112, r1: 0.098 },
+  { from: "thighL", to: "shinL", r0: 0.098, r1: 0.070 },
+  // 膝の下でいったん太くしてから足首へ絞る。これがふくらはぎ
+  { from: "shinL", to: "calfL", r0: 0.070, r1: 0.078 },
+  { from: "calfL", to: "footL", r0: 0.078, r1: 0.040 },
+  { from: "footL", to: "toeL", r0: 0.058, r1: 0.045 },
 
-  { from: "hips", to: "thighR", r0: 0.105, r1: 0.095 },
-  { from: "thighR", to: "shinR", r0: 0.095, r1: 0.068 },
-  { from: "shinR", to: "footR", r0: 0.068, r1: 0.048 },
-  { from: "footR", to: "toeR", r0: 0.05, r1: 0.045 },
+  { from: "hips", to: "thighR", r0: 0.112, r1: 0.098 },
+  { from: "thighR", to: "shinR", r0: 0.098, r1: 0.070 },
+  { from: "shinR", to: "calfR", r0: 0.070, r1: 0.078 },
+  { from: "calfR", to: "footR", r0: 0.078, r1: 0.040 },
+  { from: "footR", to: "toeR", r0: 0.058, r1: 0.045 },
 ];
 
 /** 頭は球で描く。中心は head と headTop の中間。 */
-export const HEAD_RADIUS = 0.128;
+export const HEAD_RADIUS = 0.135;

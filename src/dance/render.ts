@@ -263,11 +263,27 @@ export function drawFrame(
   const headScreen = project(stage, headCenter);
   const forward = rotate(skeleton.rot.head, { x: 0, y: 0, z: 1 });
 
+  // 頭の傾きは、首から頭頂へ向かう向きを画面上で測って合わせる。
+  // 真円だと首を傾けても分からないので、縦長にして傾きを見せる
+  const headBase = project(stage, skeleton.pos.head);
+  const headTop = project(stage, skeleton.pos.headTop);
+  const tilt = Math.atan2(headTop.y - headBase.y, headTop.x - headBase.x) + Math.PI / 2;
+
   parts.push({
     depth: headScreen.d,
     paint: () => {
+      // 球ではなく縦長の卵形にする。人の頭は横より縦が長く、
+      // 真円のままだと何をしてもボールに見える
       ctx.beginPath();
-      ctx.arc(headScreen.x, headScreen.y, headRadius * headScreen.k, 0, Math.PI * 2);
+      ctx.ellipse(
+        headScreen.x,
+        headScreen.y,
+        headRadius * 0.86 * headScreen.k,
+        headRadius * 1.08 * headScreen.k,
+        tilt,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
       if (opts.outline !== false) ctx.stroke();
 
