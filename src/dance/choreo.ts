@@ -16,7 +16,7 @@
  * 気に入らなければシードを変えて引き直す、という使い方を想定している。
  */
 
-import { getMove, hasMove, MOVES, type Move } from "./moves";
+import { getMove, hasMove, MOVES, type Move, type Mood } from "./moves";
 
 /** 振り付けの1ブロック（原則8カウント）。 */
 export interface ChoreoBlock {
@@ -84,6 +84,14 @@ export interface DanceSettings {
    */
   follow: number;
   /**
+   * 生成に使う振りの系統。
+   *
+   * 指揮の振りをダンスと同じ袋に入れておくと、普通の振り付けの途中に
+   * 突然タクトを振り始める。系統で分けておかないと両方とも使い物にならない。
+   * 空にすると全部から選ぶ。
+   */
+  styles: Mood[];
+  /**
    * ブロックごとの手動指定。長さはブロック数と一致しなくてよく、
    * 範囲外や未指定（null）のブロックは自動生成に任せる。
    */
@@ -103,6 +111,7 @@ export const DEFAULT_DANCE: DanceSettings = {
   chain: 0.6,
   snap: 0.75,
   follow: 0.35,
+  styles: ["cool", "sultry", "cute"],
   overrides: [],
 };
 
@@ -183,11 +192,15 @@ function pickMove(
     accent: boolean;
     recent: string[];
     maxCounts: number;
+    styles: Mood[];
     random: () => number;
   },
 ): Move {
-  const fits = (m: Move): boolean =>
+  const shape = (m: Move): boolean =>
     (opts.accent ? m.accent === true : m.accent !== true) && m.counts <= opts.maxCounts;
+  const inStyle = (m: Move): boolean =>
+    opts.styles.length === 0 || (m.mood !== undefined && opts.styles.includes(m.mood));
+  const fits = (m: Move): boolean => shape(m) && inStyle(m);
 
   // キメは動きの大きさで絞らない。締めの振りはどれも「締めるためのもの」で、
   // energy で選ぶと一番大きい1つだけが毎回出てきてしまう
@@ -203,8 +216,9 @@ function pickMove(
       if (pool.length > 0) return pool[Math.floor(opts.random() * pool.length) % pool.length];
     }
   }
-  // キメが1つも無いなど、どうしても見つからない場合の保険
-  const pool = MOVES.filter(fits);
+  // どうしても見つからない場合の保険。ここでは系統の絞り込みを外す
+  // （選んだ系統にキメが1つも無い、といった指定でも必ず何かを返すため）
+  const pool = MOVES.filter(shape);
   return (pool.length > 0 ? pool : MOVES)[
     Math.floor(opts.random() * (pool.length > 0 ? pool.length : MOVES.length))
   ];
@@ -314,7 +328,7 @@ export function generateChoreography(totalCounts: number, settings: DanceSetting
     for (let k = 0; k < slotsLeft - reserve; k++) maxCounts += layout[i + k].counts;
     maxCounts = Math.max(layout[i].counts, maxCounts);
 
-    const move = pickMove(level, { accent, recent, maxCounts, random });
+    const move = pickMove(level, { accent, recent, maxCounts, styles: settings.styles, random });
     const mirrored = move.mirrorable && random() < 0.5;
     const span = Math.max(1, slotsNeeded(layout, i, move.counts));
     i += place(i, move.id, mirrored, false, span);
@@ -361,6 +375,12 @@ export function normalizeDance(raw: unknown): DanceSettings {
     const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
     return Math.min(max, Math.max(min, n));
   };
+  /** 系統。知らない値は捨てる。指定が無ければ既定（＝ダンス3種）。 */
+  const moods = (v: unknown): Mood[] => {
+    if (!Array.isArray(v)) return DEFAULT_DANCE.styles.slice();
+    const known: Mood[] = ["cool", "sultry", "cute", "conduct"];
+    return known.filter((m) => v.includes(m));
+  };
 
   const rawOverrides = Array.isArray(o.overrides) ? o.overrides : [];
   const overrides = rawOverrides.slice(0, 128).map((entry): DanceOverride | null => {
@@ -378,6 +398,7 @@ export function normalizeDance(raw: unknown): DanceSettings {
     chain: num(o.chain, 0, 1, DEFAULT_DANCE.chain),
     snap: num(o.snap, 0, 1, DEFAULT_DANCE.snap),
     follow: num(o.follow, 0, 1, DEFAULT_DANCE.follow),
+    styles: moods(o.styles),
     overrides,
   };
 }

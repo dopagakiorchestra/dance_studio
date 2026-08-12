@@ -841,6 +841,66 @@ describe("体型", () => {
   });
 });
 
+describe("指揮", () => {
+  const conducts = MOVES.filter((m) => m.mood === "conduct");
+
+  it("20個ある", () => {
+    expect(conducts).toHaveLength(20);
+  });
+
+  it("締めに使えるキメが複数ある", () => {
+    // 系統を指揮だけに絞ったとき、ループの最後に置くキメが要る。
+    // 1つしか無いと毎回同じ終わり方になる
+    expect(conducts.filter((m) => m.accent).length).toBeGreaterThan(2);
+  });
+
+  it("体を斜めに向けてある", () => {
+    // カメラが正面固定だと、前へ差し出す動きは前腕が短縮して見えなくなる。
+    // 実際これを入れる前は、手が顔の横に上がっているようにしか見えなかった
+    for (const move of conducts) {
+      for (const frame of move.keyframes) {
+        expect(Math.abs(frame.pose.j?.hips?.[1] ?? 0)).toBeGreaterThan(10);
+      }
+    }
+  });
+
+  it("指揮だけで振り付けが組める", () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const choreo = generateChoreography(32, settings({ seed, styles: ["conduct"] }));
+      for (const block of choreo.blocks) {
+        expect(getMove(block.moveId)?.mood).toBe("conduct");
+      }
+      expect(getMove(choreo.blocks[choreo.blocks.length - 1].moveId)?.accent).toBe(true);
+    }
+  });
+
+  it("既定ではダンスに混ざらない", () => {
+    // 普通の振り付けの途中で突然タクトを振り始めると、どちらも使い物にならない
+    for (let seed = 1; seed <= 30; seed++) {
+      const choreo = generateChoreography(32, settings({ seed }));
+      for (const block of choreo.blocks) {
+        expect(getMove(block.moveId)?.mood).not.toBe("conduct");
+      }
+    }
+  });
+
+  it("系統を空にすると全部から選ぶ", () => {
+    const used = new Set<string | undefined>();
+    for (let seed = 1; seed <= 40; seed++) {
+      for (const block of generateChoreography(32, settings({ seed, styles: [] })).blocks) {
+        used.add(getMove(block.moveId)?.mood);
+      }
+    }
+    expect(used.has("conduct")).toBe(true);
+    expect(used.size).toBeGreaterThan(2);
+  });
+
+  it("知らない系統は捨てて既定に戻す", () => {
+    expect(normalizeDance({ styles: ["conduct", "でたらめ"] }).styles).toEqual(["conduct"]);
+    expect(normalizeDance({}).styles).toEqual(DEFAULT_DANCE.styles);
+  });
+});
+
 describe("深度マップ", () => {
   const choreo = generateChoreography(32, DEFAULT_DANCE);
   const opts = { bounce: 0.6, chain: 0.6, snap: 0.75, groove: 0.7, follow: 0.35 };

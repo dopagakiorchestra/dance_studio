@@ -28,8 +28,8 @@ export interface MoveKeyframe {
   ease?: Ease;
 }
 
-/** 振りの持ち味。生成では使わず、一覧の並べ分けに使う。 */
-export type Mood = "cool" | "sultry" | "cute";
+/** 振りの持ち味。生成する系統の絞り込みと、一覧の並べ分けに使う。 */
+export type Mood = "cool" | "sultry" | "cute" | "conduct";
 
 export interface Move {
   id: string;
@@ -42,7 +42,7 @@ export interface Move {
   mirrorable: boolean;
   /** フレーズの締めに置きたいキメ技か。 */
   accent?: boolean;
-  /** 持ち味。未指定は基本の振り。 */
+  /** 持ち味。生成でどの系統を使うかの絞り込みと、一覧の並べ分けに使う。 */
   mood?: Mood;
   keyframes: MoveKeyframe[];
 }
@@ -148,6 +148,113 @@ function kf(count: number, pose: Pose, ease?: Ease): MoveKeyframe {
  * energy は生成側が曲の盛り上がりに合わせて選ぶために使う。
  * mirrorable が true のものは、同じ振りを左右反転して2回目に使える。
  */
+
+// --- 指揮 ---
+//
+// オーケストラを正面から見た向き（＝奏者から見た指揮者）で作ってある。
+// 右手がタクト、左手が表情づけ、という古典的な役割分担。
+//
+// 打点の角度は「手をこの位置に置きたい」から逆運動学で解いて丸めたもの。
+// 手で当てると必ず腕が伸び切るか肩が上がるので、位置から逆算している。
+
+interface Hand {
+  arm: Rot;
+  /** 肘の曲げ（度）。生の配列ではなく必ずこの数値から `elbow()` で作る。 */
+  elbow: number;
+}
+
+/** 右手（タクト）の置き場所。振る箱の中の打点。 */
+const R = {
+  /** 1拍目。体の正面やや下 */
+  down: { arm: [-5, 0, 4], elbow: 60 },
+  /** 2拍目。体を横切って内側へ */
+  in: { arm: [-6, 0, 41], elbow: 52 },
+  /** 3拍目。外へ払う */
+  out: { arm: [1, 0, -45], elbow: 60 },
+  /** 4拍目。跳ね上げ */
+  up: { arm: [-100, 0, -28], elbow: 100 },
+  /** 構え。胸の高さ */
+  ready: { arm: [0, 0, -24], elbow: 91 },
+  /** 大きく上へ */
+  high: { arm: [-135, 0, -21], elbow: 58 },
+  /** 大きく外へ */
+  wide: { arm: [16, 0, -73], elbow: 43 },
+  /** 低く抑える */
+  low: { arm: [-13, 0, -5], elbow: 22 },
+  /** 刻みの上。振り幅の小さい打点 */
+  tickUp: { arm: [2, 0, -34], elbow: 109 },
+  /** 刻みの下 */
+  tickDown: { arm: [-1, 0, -16], elbow: 79 },
+  /** 重い打点。腕ごと落とす */
+  heavy: { arm: [-13, 0, 1], elbow: 30 },
+  /** 内へ締める（カットオフ） */
+  close: { arm: [9, 0, 25], elbow: 95 },
+  /** 体側に下ろす（お辞儀） */
+  side: { arm: [4, 0, -6], elbow: 22 },
+} satisfies Record<string, Hand>;
+
+/** 左手（表情づけ）の置き場所。 */
+const L = {
+  ready: { arm: [0, 0, 24], elbow: 91 },
+  /** 手のひらを上に。引き出す */
+  palm: { arm: [-7, 0, 35], elbow: 70 },
+  /** 手のひらを下に。抑える */
+  down: { arm: [-13, 0, 11], elbow: 26 },
+  /** 高く開く */
+  open: { arm: [-38, 0, 110], elbow: 64 },
+  /** 大きく外へ */
+  wide: { arm: [16, 0, 73], elbow: 43 },
+  /** 指さし（合図） */
+  point: { arm: [7, 0, 76], elbow: 69 },
+  /** 内へ締める（カットオフ） */
+  close: { arm: [9, 0, -25], elbow: 95 },
+  /** 胸に当てる */
+  chest: { arm: [30, 0, -10], elbow: 113 },
+  /** 体側に下ろす（お辞儀） */
+  side: { arm: [4, 0, 6], elbow: 22 },
+} satisfies Record<string, Hand>;
+
+/**
+ * 体を斜めに向ける角度（度）。
+ *
+ * 指揮はほぼ全部が「前へ差し出す」動きで、カメラが正面固定だと前腕が
+ * 短縮して消え、手が顔の横に上がっているようにしか見えない（実際そうなった）。
+ * 体を斜めにすると前後の動きが画面上の左右に化けて読めるようになる。
+ * README の「前後を見せたい振りは hips の Y 回転で体を斜めに向けること」。
+ */
+const PODIUM_TURN = 22;
+
+/**
+ * 指揮台の上の構え。
+ *
+ * 足はほとんど動かさない。指揮者の下半身は踊らないので、ここを動かすと
+ * 途端に「指揮者っぽさ」が消える。`lean` は前傾（度）、`turn` は上体の振り向き。
+ */
+function podium(lean = 0, turn = 0): Pose {
+  return {
+    root: { y: HIP_HEIGHT },
+    j: {
+      hips: [0, PODIUM_TURN, 0],
+      thighL: [0, 0, 5],
+      thighR: [0, 0, -5],
+      shinL: [5, 0, 0],
+      shinR: [5, 0, 0],
+      spine: [-lean * 0.55, turn * 0.3, 0],
+      chest: [-lean * 0.45, turn * 0.7, 0],
+    },
+  };
+}
+
+/** 指揮の両腕。右手（タクト）と左手（表情づけ）を別々に置く。 */
+function baton(right: Hand, left: Hand): Pose {
+  return arms(left.arm, right.arm, elbow(left.elbow), elbow(right.elbow));
+}
+
+/** 顔と目線。`turn` は正で キャラの左（画面右）を向く。 */
+function gaze(turn: number, tilt = 0): Pose {
+  return { j: { neck: [tilt * 0.4, turn * 0.35, 0], head: [tilt * 0.6, turn * 0.65, 0] } };
+}
+
 export const MOVES: Move[] = [
   {
     id: "turnHalf",
@@ -671,6 +778,329 @@ export const MOVES: Move[] = [
       kf(1, { root: { y: HIP_HEIGHT - 0.1 }, j: { thighL: [-26, 0, 8], shinL: [48, 0, 0], thighR: [-26, 0, -8], shinR: [48, 0, 0], spine: [-12, 0, 0], upperArmL: [-30, 0, 30], upperArmR: [-30, 0, -30] } }),
       kf(2, { root: { x: 0.03, y: HIP_HEIGHT }, j: { upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, -20, 6], head: [-10, -18, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }),
       kf(4, { root: { x: 0.03, y: HIP_HEIGHT }, j: { upperArmL: [-24, 0, 150], upperArmR: [20, 0, -44], forearmR: elbow(60), chest: [0, -20, 6], head: [-10, -18, 8], thighR: [-16, 0, -10], shinR: [26, 0, 0] } }, "hold"),
+    ],
+  },
+  // --- 指揮 ---
+  {
+    id: "conduct4",
+    name: "4拍子を振る",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(3), baton(R.down, L.ready), gaze(0, 4))),
+      kf(1, merge(podium(3, 6), baton(R.in, L.ready), gaze(6))),
+      kf(2, merge(podium(3, -8), baton(R.out, L.ready), gaze(-8))),
+      kf(3, merge(podium(1), baton(R.up, L.ready), gaze(0, -6))),
+      kf(4, merge(podium(3), baton(R.down, L.ready), gaze(0, 4))),
+    ],
+  },
+  {
+    id: "conduct3",
+    name: "3拍子を振る",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    // 3拍子は丸い三角形を描く。4カウントの枠に3つの打点を等間隔で入れるので、
+    // ここだけキーフレームが表拍から外れる（このアプリで初めて裏拍に置いた振り）
+    keyframes: [
+      kf(0, merge(podium(3), baton(R.down, L.ready), gaze(0, 4))),
+      kf(4 / 3, merge(podium(2, -7), baton(R.out, L.ready), gaze(-7)), "inout"),
+      kf(8 / 3, merge(podium(1), baton(R.up, L.ready), gaze(0, -5)), "inout"),
+      kf(4, merge(podium(3), baton(R.down, L.ready), gaze(0, 4))),
+    ],
+  },
+  {
+    id: "conduct2",
+    name: "2拍子を振る",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(4), baton(R.heavy, L.ready), gaze(0, 6))),
+      kf(1, merge(podium(0), baton(R.high, L.ready), gaze(0, -8))),
+      kf(2, merge(podium(4), baton(R.heavy, L.ready), gaze(0, 6))),
+      kf(3, merge(podium(0), baton(R.high, L.ready), gaze(0, -8))),
+      kf(4, merge(podium(4), baton(R.heavy, L.ready), gaze(0, 6))),
+    ],
+  },
+  {
+    id: "subdivide",
+    name: "刻みを細かく",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    // 6分割。1拍の中を3つに割るので打点は 2/3 カウントおき
+    keyframes: [
+      kf(0, merge(podium(2), baton(R.tickDown, L.down), gaze(0, 3))),
+      kf(2 / 3, merge(podium(2), baton(R.tickUp, L.down), gaze(0, -3))),
+      kf(4 / 3, merge(podium(2), baton(R.tickDown, L.down), gaze(0, 3))),
+      kf(2, merge(podium(2), baton(R.tickUp, L.down), gaze(0, -3))),
+      kf(8 / 3, merge(podium(2), baton(R.tickDown, L.down), gaze(0, 3))),
+      kf(10 / 3, merge(podium(2), baton(R.tickUp, L.down), gaze(0, -3))),
+      kf(4, merge(podium(2), baton(R.tickDown, L.down), gaze(0, 3))),
+    ],
+  },
+  {
+    id: "batonReady",
+    name: "タクトを構える",
+    counts: 4,
+    energy: 0,
+    mirrorable: false,
+    mood: "conduct",
+    // 曲が始まる前の一瞬。ここで止まるから次の打点が生きる
+    keyframes: [
+      kf(0, merge(podium(0), baton(R.low, L.down), gaze(0, 2))),
+      kf(1, merge(podium(2), baton(R.ready, L.ready), gaze(0, -4))),
+      kf(2, merge(podium(2), baton(R.ready, L.ready), gaze(0, -4)), "hold"),
+      kf(3, merge(podium(2), baton(R.ready, L.ready), gaze(0, -4)), "hold"),
+      kf(4, merge(podium(2), baton(R.ready, L.ready), gaze(0, -4)), "hold"),
+    ],
+  },
+  {
+    id: "upbeat",
+    name: "アウフタクト",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    // 息を吸って上げ、落として1拍目を出す
+    keyframes: [
+      kf(0, merge(podium(2), baton(R.ready, L.ready), gaze(0, -2))),
+      kf(1, merge(podium(-2), baton(R.high, L.palm), gaze(0, -10))),
+      kf(2, merge(podium(6), baton(R.down, L.ready), gaze(0, 8))),
+      kf(3, merge(podium(3, -6), baton(R.out, L.ready), gaze(-6))),
+      kf(4, merge(podium(2), baton(R.ready, L.ready), gaze(0, -2))),
+    ],
+  },
+  {
+    id: "cuePoint",
+    name: "合図を出す",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "conduct",
+    // 左手で指して、必ず目線も向ける。手だけ向けても合図に見えない
+    keyframes: [
+      kf(0, merge(podium(2), baton(R.ready, L.ready), gaze(0))),
+      kf(1, merge(podium(2, 16), baton(R.tickUp, L.point), gaze(24, -4))),
+      kf(2, merge(podium(2, 16), baton(R.tickDown, L.point), gaze(24, -4))),
+      kf(3, merge(podium(2, 6), baton(R.ready, L.palm), gaze(10))),
+      kf(4, merge(podium(2), baton(R.ready, L.ready), gaze(0))),
+    ],
+  },
+  {
+    id: "crescendo",
+    name: "クレッシェンド",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    // 左手が下から開きながら上がる。上体も一緒に起きていく
+    keyframes: [
+      kf(0, merge(podium(5), baton(R.down, L.down), gaze(0, 6))),
+      kf(1, merge(podium(3), baton(R.out, L.palm), gaze(-4, 2)), "inout"),
+      kf(2, merge(podium(0), baton(R.down, L.palm), gaze(0, -2)), "inout"),
+      kf(3, merge(podium(-3), baton(R.up, L.open), gaze(0, -10)), "inout"),
+      kf(4, merge(podium(-5), baton(R.high, L.open), gaze(0, -14)), "inout"),
+    ],
+  },
+  {
+    id: "diminuendo",
+    name: "ディミヌエンド",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(-4), baton(R.high, L.open), gaze(0, -12)), "inout"),
+      kf(1, merge(podium(0), baton(R.out, L.palm), gaze(-4, -2)), "inout"),
+      kf(2, merge(podium(3), baton(R.tickDown, L.palm), gaze(0, 4)), "inout"),
+      kf(3, merge(podium(6), baton(R.low, L.down), gaze(0, 10)), "inout"),
+      kf(4, merge(podium(7), baton(R.low, L.down), gaze(0, 12)), "inout"),
+    ],
+  },
+  {
+    id: "hushDown",
+    name: "静かに抑える",
+    counts: 4,
+    energy: 0,
+    mirrorable: false,
+    mood: "conduct",
+    // 左の手のひらを下へ押さえながら、右は小さく刻む
+    keyframes: [
+      kf(0, merge(podium(4), baton(R.tickUp, L.palm), gaze(0, 6))),
+      kf(1, merge(podium(6), baton(R.tickDown, L.down), gaze(0, 10))),
+      kf(2, merge(podium(6), baton(R.tickUp, L.down), gaze(0, 10))),
+      kf(3, merge(podium(7), baton(R.tickDown, L.down), gaze(0, 12))),
+      kf(4, merge(podium(7), baton(R.tickUp, L.down), gaze(0, 12))),
+    ],
+  },
+  {
+    id: "tutti",
+    name: "全員で",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(3), baton(R.ready, L.ready), gaze(0, 2))),
+      kf(1, merge(podium(-2), baton(R.wide, L.wide), gaze(0, -8))),
+      kf(2, merge(podium(-5), baton(R.high, L.open), gaze(0, -14))),
+      kf(3, merge(podium(-2), baton(R.wide, L.wide), gaze(0, -8))),
+      kf(4, merge(podium(3), baton(R.ready, L.ready), gaze(0, 2))),
+    ],
+  },
+  {
+    id: "sforzando",
+    name: "鋭く出す",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    // 打点で全身が止まる。止まるから鋭く見える
+    keyframes: [
+      kf(0, merge(podium(0), baton(R.high, L.chest), gaze(0, -10))),
+      kf(1, merge(podium(10), baton(R.heavy, L.close), gaze(0, 14))),
+      kf(2, merge(podium(10), baton(R.heavy, L.close), gaze(0, 14)), "hold"),
+      kf(3, merge(podium(3), baton(R.ready, L.ready), gaze(0, 2))),
+      kf(4, merge(podium(0), baton(R.high, L.chest), gaze(0, -10))),
+    ],
+  },
+  {
+    id: "legato",
+    name: "レガート",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    // 打点を作らず横へ流す。ease を inout にして角を消す
+    keyframes: [
+      kf(0, merge(podium(2, -8), baton(R.out, L.palm), gaze(-8, -2))),
+      kf(1, merge(podium(2, 8), baton(R.in, L.wide), gaze(8, -2)), "inout"),
+      kf(2, merge(podium(2, -8), baton(R.out, L.open), gaze(-8, -4)), "inout"),
+      kf(3, merge(podium(2, 8), baton(R.in, L.palm), gaze(8, -2)), "inout"),
+      kf(4, merge(podium(2, -8), baton(R.out, L.palm), gaze(-8, -2)), "inout"),
+    ],
+  },
+  {
+    id: "staccato",
+    name: "スタッカート",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    // 手首から先だけの小さい打点を裏拍まで刻む
+    keyframes: [
+      kf(0, merge(podium(3), baton(R.tickDown, L.down), gaze(0, 4))),
+      kf(0.5, merge(podium(3), baton(R.tickUp, L.down), gaze(0, 1))),
+      kf(1, merge(podium(3), baton(R.tickDown, L.down), gaze(0, 4))),
+      kf(1.5, merge(podium(3), baton(R.tickUp, L.down), gaze(0, 1))),
+      kf(2, merge(podium(3), baton(R.tickDown, L.down), gaze(0, 4))),
+      kf(2.5, merge(podium(3), baton(R.tickUp, L.down), gaze(0, 1))),
+      kf(3, merge(podium(3), baton(R.tickDown, L.down), gaze(0, 4))),
+      kf(3.5, merge(podium(3), baton(R.tickUp, L.down), gaze(0, 1))),
+      kf(4, merge(podium(3), baton(R.tickDown, L.down), gaze(0, 4))),
+    ],
+  },
+  {
+    id: "marcato",
+    name: "マルカート",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0), baton(R.ready, L.ready), gaze(0, -4))),
+      kf(1, merge(podium(8, 5), baton(R.heavy, L.down), gaze(4, 12))),
+      kf(2, merge(podium(0), baton(R.up, L.ready), gaze(0, -6))),
+      kf(3, merge(podium(8, -5), baton(R.heavy, L.down), gaze(-4, 12))),
+      kf(4, merge(podium(0), baton(R.ready, L.ready), gaze(0, -4))),
+    ],
+  },
+  {
+    id: "singGesture",
+    name: "歌わせる",
+    counts: 4,
+    energy: 1,
+    mirrorable: true,
+    mood: "conduct",
+    // 手のひらを上に、引き出すように。上体を寄せて顔を傾ける
+    keyframes: [
+      kf(0, merge(podium(2), baton(R.ready, L.palm), gaze(4, 2))),
+      kf(1, merge(podium(6, 10), baton(R.tickDown, L.palm), gaze(16, 8)), "inout"),
+      kf(2, merge(podium(4, 12), baton(R.tickUp, L.wide), gaze(18, 4)), "inout"),
+      kf(3, merge(podium(2, 6), baton(R.ready, L.palm), gaze(10, 2)), "inout"),
+      kf(4, merge(podium(2), baton(R.ready, L.palm), gaze(4, 2)), "inout"),
+    ],
+  },
+  {
+    id: "leanIn",
+    name: "乗り出して煽る",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(2), baton(R.ready, L.ready), gaze(0, 2))),
+      kf(1, merge(podium(14), baton(R.low, L.down), gaze(0, 16))),
+      kf(2, merge(podium(8), baton(R.tickUp, L.palm), gaze(0, 6))),
+      kf(3, merge(podium(14), baton(R.heavy, L.down), gaze(0, 16))),
+      kf(4, merge(podium(2), baton(R.ready, L.ready), gaze(0, 2))),
+    ],
+  },
+  {
+    id: "cutoff",
+    name: "キメ（切る）",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    accent: true,
+    mood: "conduct",
+    // 両手で輪を閉じて、そこで完全に止める
+    keyframes: [
+      kf(0, merge(podium(-2), baton(R.wide, L.wide), gaze(0, -8))),
+      kf(1, merge(podium(4), baton(R.close, L.close), gaze(0, 6))),
+      kf(2, merge(podium(4), baton(R.close, L.close), gaze(0, 6)), "hold"),
+      kf(3, merge(podium(4), baton(R.close, L.close), gaze(0, 6)), "hold"),
+      kf(4, merge(podium(4), baton(R.close, L.close), gaze(0, 6)), "hold"),
+    ],
+  },
+  {
+    id: "fermata",
+    name: "キメ（フェルマータ）",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    accent: true,
+    mood: "conduct",
+    // 伸ばす。上げ切ったまま動かないのがフェルマータ
+    keyframes: [
+      kf(0, merge(podium(3), baton(R.ready, L.ready), gaze(0, 2))),
+      kf(1, merge(podium(-6), baton(R.high, L.open), gaze(0, -16))),
+      kf(2, merge(podium(-6), baton(R.high, L.open), gaze(0, -16)), "hold"),
+      kf(3, merge(podium(-6), baton(R.high, L.open), gaze(0, -16)), "hold"),
+      kf(4, merge(podium(-6), baton(R.high, L.open), gaze(0, -16)), "hold"),
+    ],
+  },
+  {
+    id: "maestroBow",
+    name: "キメ（お辞儀）",
+    counts: 4,
+    energy: 0,
+    mirrorable: false,
+    accent: true,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0), baton(R.ready, L.ready), gaze(0, -2))),
+      kf(1, merge(podium(0), baton(R.side, L.side), gaze(0, 2))),
+      kf(2, merge(podium(42), baton(R.side, L.side), gaze(0, 14))),
+      kf(3, merge(podium(42), baton(R.side, L.side), gaze(0, 14)), "hold"),
+      kf(4, merge(podium(42), baton(R.side, L.side), gaze(0, 14)), "hold"),
     ],
   },
 ];

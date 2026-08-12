@@ -45,12 +45,12 @@ export interface DanceStudioProps {
   playPosition: number | null;
 }
 
-/** 一覧の並べ分け。未指定の振りは「基本」に入る。 */
-const MOOD_GROUPS: Array<{ mood: Mood | undefined; label: string }> = [
-  { mood: undefined, label: "基本" },
+/** 一覧の並べ分けと、生成に使う系統の選択。 */
+const MOOD_GROUPS: Array<{ mood: Mood; label: string }> = [
   { mood: "cool", label: "かっこいい" },
   { mood: "sultry", label: "妖艶" },
   { mood: "cute", label: "かわいい" },
+  { mood: "conduct", label: "指揮" },
 ];
 
 /** 体型のつまみ。 */
@@ -439,7 +439,34 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
               </div>
             </div>
 
+            <div className="field">
+              <span className="label">使う系統</span>
+              <div className="styles">
+                {MOOD_GROUPS.map(({ mood, label }) => (
+                  <label className="checkline" key={mood}>
+                    <input
+                      type="checkbox"
+                      checked={dance.styles.includes(mood)}
+                      onChange={(e) =>
+                        patch({
+                          styles: e.target.checked
+                            ? MOOD_GROUPS.filter(
+                                (g) => g.mood === mood || dance.styles.includes(g.mood),
+                              ).map((g) => g.mood)
+                            : dance.styles.filter((m) => m !== mood),
+                        })
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
             <p className="hint">
+              「使う系統」で、自動生成がどの振りから選ぶかを決めます。指揮の振りを
+              ダンスと混ぜると、普通の振り付けの途中で突然タクトを振り始めるので、
+              ふつうはどちらか一方にしてください（全部外すと全系統から選びます）。
               「動きの大きさ」を上げると、大ぶりな振りが選ばれやすくなります。
               「ビートの乗り」は拍への乗りの深さです。0 にすると踊っているように
               見えなくなるので、少しは残しておくのがおすすめです。

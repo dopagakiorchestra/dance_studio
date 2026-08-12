@@ -303,3 +303,10 @@ input[type="file"] {
     min-width: 84px;
   }
 }
+
+/* 使う系統のチェックボックス列 */
+.styles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
