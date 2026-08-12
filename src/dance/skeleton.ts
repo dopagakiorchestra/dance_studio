@@ -34,10 +34,12 @@ export type JointName =
   | "upperArmL"
   | "forearmL"
   | "handL"
+  | "knuckleL"
   | "handTipL"
   | "upperArmR"
   | "forearmR"
   | "handR"
+  | "knuckleR"
   | "handTipR"
   | "thighL"
   | "shinL"
@@ -70,12 +72,16 @@ const JOINTS: JointDef[] = [
   { name: "upperArmL", parent: "chest", offset: { x: 0.19, y: 0.13, z: 0 } },
   { name: "forearmL", parent: "upperArmL", offset: { x: 0, y: -0.28, z: 0 } },
   { name: "handL", parent: "forearmL", offset: { x: 0, y: -0.26, z: 0 } },
-  { name: "handTipL", parent: "handL", offset: { x: 0, y: -0.15, z: 0 } },
+  // 手のひらと指を分ける。1本の棒だと必ず手刀に見えるので、
+  // 指の付け根で折れを作れるようにしてある
+  { name: "knuckleL", parent: "handL", offset: { x: 0, y: -0.072, z: 0 } },
+  { name: "handTipL", parent: "knuckleL", offset: { x: 0, y: -0.078, z: 0 } },
 
   { name: "upperArmR", parent: "chest", offset: { x: -0.19, y: 0.13, z: 0 } },
   { name: "forearmR", parent: "upperArmR", offset: { x: 0, y: -0.28, z: 0 } },
   { name: "handR", parent: "forearmR", offset: { x: 0, y: -0.26, z: 0 } },
-  { name: "handTipR", parent: "handR", offset: { x: 0, y: -0.15, z: 0 } },
+  { name: "knuckleR", parent: "handR", offset: { x: 0, y: -0.072, z: 0 } },
+  { name: "handTipR", parent: "knuckleR", offset: { x: 0, y: -0.078, z: 0 } },
 
   { name: "thighL", parent: "hips", offset: { x: 0.115, y: -0.04, z: 0 } },
   { name: "shinL", parent: "thighL", offset: { x: 0, y: -0.45, z: 0 } },
@@ -117,7 +123,7 @@ const LEG_JOINTS = new Set<JointName>(["thighL", "shinL", "footL", "toeL", "thig
 
 /** 腕の長さに関わる関節。 */
 const ARM_JOINTS = new Set<JointName>([
-  "forearmL", "handL", "handTipL", "forearmR", "handR", "handTipR",
+  "forearmL", "handL", "knuckleL", "handTipL", "forearmR", "handR", "knuckleR", "handTipR",
 ]);
 
 /** 体型を反映した関節の位置ずれ。 */
@@ -180,6 +186,7 @@ const MIRROR_PAIRS: Array<[JointName, JointName]> = [
   ["upperArmL", "upperArmR"],
   ["forearmL", "forearmR"],
   ["handL", "handR"],
+  ["knuckleL", "knuckleR"],
   ["handTipL", "handTipR"],
   ["thighL", "thighR"],
   ["shinL", "shinR"],
@@ -371,9 +378,12 @@ export interface Limb {
  * Domo AI のような映像変換に渡す素材なので、シルエットが潰れないよう
  * 手足はやや太めにして、体の各部が離れて見えないようにしてある。
  *
- * 手だけは例外で、細長く先を絞ってある。握り拳と開いた手はシルエットの
- * 縦横比で見分けられていて、長さと幅が同じだと必ずグーに見える。
- * 指を作らずに「開いた手」を読ませるには、長さを幅の倍近くまで伸ばすのが早い。
+ * 手だけは例外で、手のひらと指の2節に分けてある。
+ *
+ * 長さと幅が同じだとグーに見え、1本の細長い棒にすると今度は手刀に見える。
+ * どちらも「指の付け根で折れる」という手の特徴が出ていないのが原因なので、
+ * 節を分けて、指side だけ丸められるようにした。先端は尖らせず丸めてある
+ * （尖らせると刃物のように見える）。
  */
 export const LIMBS: Limb[] = [
   { from: "hips", to: "spine", r0: 0.115, r1: 0.12 },
@@ -385,12 +395,14 @@ export const LIMBS: Limb[] = [
   { from: "chest", to: "upperArmL", r0: 0.1, r1: 0.075 },
   { from: "upperArmL", to: "forearmL", r0: 0.065, r1: 0.05 },
   { from: "forearmL", to: "handL", r0: 0.05, r1: 0.04 },
-  { from: "handL", to: "handTipL", r0: 0.045, r1: 0.018 },
+  { from: "handL", to: "knuckleL", r0: 0.048, r1: 0.046 },
+  { from: "knuckleL", to: "handTipL", r0: 0.044, r1: 0.028 },
 
   { from: "chest", to: "upperArmR", r0: 0.1, r1: 0.075 },
   { from: "upperArmR", to: "forearmR", r0: 0.065, r1: 0.05 },
   { from: "forearmR", to: "handR", r0: 0.05, r1: 0.04 },
-  { from: "handR", to: "handTipR", r0: 0.045, r1: 0.018 },
+  { from: "handR", to: "knuckleR", r0: 0.048, r1: 0.046 },
+  { from: "knuckleR", to: "handTipR", r0: 0.044, r1: 0.028 },
 
   { from: "hips", to: "thighL", r0: 0.105, r1: 0.095 },
   { from: "thighL", to: "shinL", r0: 0.095, r1: 0.068 },

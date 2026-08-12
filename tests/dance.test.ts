@@ -20,6 +20,7 @@ import {
   HIP_HEIGHT,
   JOINT_NAMES,
   mirrorPose,
+  LIMBS,
   REST_HEIGHT,
   solvePose,
   type JointName,
@@ -601,6 +602,51 @@ describe("肘", () => {
       peak = Math.max(peak, elbowAngle(pose, "L"), elbowAngle(pose, "R"));
     }
     expect(peak).toBeGreaterThan(100);
+  });
+});
+
+describe("手", () => {
+  const choreo = generateChoreography(16, settings({ seed: 9 }));
+
+  /** 手のひらと指のなす角。0 だと一直線＝手刀に見える。 */
+  function knuckleAngle(pose: Pose, side: "L" | "R"): number {
+    const { pos } = solvePose(pose);
+    const a = pos[`hand${side}`];
+    const b = pos[`knuckle${side}`];
+    const c = pos[`handTip${side}`];
+    const u = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+    const v = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+    const dot = u.x * v.x + u.y * v.y + u.z * v.z;
+    const cos = dot / (Math.hypot(u.x, u.y, u.z) * Math.hypot(v.x, v.y, v.z));
+    return (Math.acos(Math.min(1, Math.max(-1, cos))) * 180) / Math.PI;
+  }
+
+  it("指はいつも少し丸まっている（手刀にならない）", () => {
+    // 伸ばし切った手は刃物に見える。折れは指の付け根に置く。
+    // 手首で折ると「手を反らせている」になってしまう
+    for (let count = 0; count < 16; count += 0.5) {
+      const pose = samplePose(choreo, count, { bounce: 0.6, groove: 0.7, snap: 0.75 });
+      for (const side of ["L", "R"] as const) {
+        expect(knuckleAngle(pose, side)).toBeGreaterThan(10);
+      }
+    }
+  });
+
+  it("指先を尖らせない（尖ると刃物に見える）", () => {
+    const fingers = LIMBS.filter((l) => l.to === "handTipL" || l.to === "handTipR");
+    expect(fingers.length).toBe(2);
+    for (const limb of fingers) {
+      // 先端が根元の半分を切ると針のように見える
+      expect(limb.r1).toBeGreaterThan(limb.r0 * 0.5);
+    }
+  });
+
+  it("手が握り拳に見えない縦横比になっている", () => {
+    // 長さと幅が同じだとグーに見える。手のひら＋指で幅の 1.4 倍以上は要る
+    const { pos } = solvePose({});
+    const length = Math.abs(pos.handTipL.y - pos.handL.y);
+    const width = 2 * 0.048;
+    expect(length / width).toBeGreaterThan(1.4);
   });
 });
 

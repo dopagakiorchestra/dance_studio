@@ -272,7 +272,7 @@ const CHAIN_TIERS: Array<{ steps: number; joints: JointName[] }> = [
   { steps: 1, joints: ["spine"] },
   { steps: 2, joints: ["chest", "neck", "upperArmL", "upperArmR"] },
   { steps: 3, joints: ["head", "headTop", "forearmL", "forearmR"] },
-  { steps: 4, joints: ["handL", "handTipL", "handR", "handTipR"] },
+  { steps: 4, joints: ["handL", "knuckleL", "handTipL", "handR", "knuckleR", "handTipR"] },
 ];
 
 /** 段ひとつぶんの遅れ（カウント）。最大でも 4 段なので全体で 0.2 カウント。 */
@@ -338,6 +338,60 @@ function softenElbows(pose: Pose): Pose {
 }
 
 /**
+ * 脱力した手の、指の丸まり（度）。
+ *
+ * 手を開いても指は真っ直ぐには伸びない。伸ばし切った手は手刀に見える。
+ * 折れを指の付け根に置くのが要点で、手首で折ると「手を反らせている」に
+ * なってしまう。
+ */
+const FINGER_CURL = 26;
+
+/** 手首のわずかな落ち（度）。前腕と一直線だと棒に見える。 */
+const WRIST_DROP = 10;
+
+/** 手首をわずかに小指側へ倒す量（度）。左右対称に外へ開く。 */
+const WRIST_SPREAD = 7;
+
+/**
+ * これ以上曲げてあるときは手を出さない（度）。
+ * 振り付けが手の形を作っているところを上書きしない。
+ */
+const HAND_AUTHORED = 20;
+
+/**
+ * 手を脱力した形にする。
+ *
+ * 振り付け側は手をほとんど書かない（書くのは「きらきら」など数個だけ）。
+ * 既定が真っ直ぐだと、伸ばした指の板がずっと腕の先に付いていることになる。
+ */
+function relaxHands(pose: Pose): Pose {
+  const j: Partial<Record<JointName, Rot>> = { ...pose.j };
+  let touched = false;
+
+  for (const [handName, knuckleName, outward] of [
+    ["handL", "knuckleL", 1],
+    ["handR", "knuckleR", -1],
+  ] as Array<[JointName, JointName, number]>) {
+    const hand = j[handName] ?? [0, 0, 0];
+    const knuckle = j[knuckleName] ?? [0, 0, 0];
+
+    // 指はいつも丸めておく。ここは振り付け側がまず書かない
+    if (Math.abs(knuckle[0]) < HAND_AUTHORED) {
+      j[knuckleName] = [knuckle[0] - FINGER_CURL, knuckle[1], knuckle[2]];
+      touched = true;
+    }
+
+    // 手首は、振り付けが手を回しているときは触らない
+    if (Math.hypot(hand[0], hand[2]) < HAND_AUTHORED) {
+      j[handName] = [hand[0] - WRIST_DROP, hand[1], hand[2] + WRIST_SPREAD * outward];
+      touched = true;
+    }
+  }
+
+  return touched ? { root: pose.root, j } : pose;
+}
+
+/**
  * ダイナミクスで振り幅を広げる関節。
  *
  * 脚・腰・root は触らない。weight() が足の位置を角度で打ち消していたり、
@@ -346,8 +400,8 @@ function softenElbows(pose: Pose): Pose {
  */
 const AMPLIFY: JointName[] = [
   "spine", "chest", "neck", "head", "headTop",
-  "upperArmL", "forearmL", "handL", "handTipL",
-  "upperArmR", "forearmR", "handR", "handTipR",
+  "upperArmL", "forearmL", "handL", "knuckleL", "handTipL",
+  "upperArmR", "forearmR", "handR", "knuckleR", "handTipR",
 ];
 
 /**
@@ -474,7 +528,9 @@ export function samplePose(
   const total = choreo.totalCounts;
   const pos = wrap(countPos, total);
   const snap = opts.snap ?? 0;
-  const pose = softenElbows(amplify(chainedPose(choreo, pos, total, opts.chain ?? 0, snap), snap));
+  const pose = relaxHands(
+    softenElbows(amplify(chainedPose(choreo, pos, total, opts.chain ?? 0, snap), snap)),
+  );
 
   return applyGroove(pose, pos, opts.bounce, snap, opts.groove ?? 0);
 }
