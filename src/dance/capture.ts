@@ -41,6 +41,37 @@ const DETECT_SIZE = 480;
 /** 前後何コマで均すか。奇数にすること。 */
 const SMOOTH_WINDOW = 5;
 
+/**
+ * 各段階の待ち時間の上限（ミリ秒）。
+ *
+ * **ここを入れていなかったせいで、読めない動画を渡すと無言で止まったままに
+ * なっていた。** 何も起きないのが一番たちが悪い。行き詰まったら必ず理由を
+ * 返して終わること。
+ */
+const LOAD_TIMEOUT = 20000;
+const SEEK_TIMEOUT = 10000;
+const MODEL_TIMEOUT = 120000;
+
+/** 期限付きで待つ。時間切れなら `null` を返す。 */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([work, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+}
+
+/**
+ * このブラウザがこの動画を再生できそうか。
+ *
+ * iPhone で撮った .mov（HEVC）は Chrome や Firefox では開けないことが多い。
+ * 読み込みが失敗してから言うより、選んだ時点で言うほうが親切。
+ */
+export function playabilityOf(file: Blob): "yes" | "maybe" | "no" {
+  if (typeof document === "undefined") return "maybe";
+  const probe = document.createElement("video");
+  const type = file.type || "";
+  if (!type) return "maybe";
+  const can = probe.canPlayType(type);
+  return can === "probably" ? "yes" : can === "maybe" ? "maybe" : "no";
+}
+
 export interface CaptureOptions {
   file: Blob;
   /** 体型の脚倍率。腰の高さをこの骨格に合わせるのに使う。 */
@@ -62,17 +93,33 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new CaptureAborted();
 }
 
+/** 読めない動画に共通で出す案内。 */
+const UNSUPPORTED =
+  "この動画をブラウザが開けませんでした。iPhone で撮った .mov（HEVC）は Chrome や " +
+  "Firefox では開けないことが多いので、MP4（H.264）に変換するか、Safari で開いてみてください。";
+
 /** 動画を読み込んで、メタデータが揃うまで待つ。 */
-function loadVideo(url: string): Promise<HTMLVideoElement> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement("video");
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
+async function loadVideo(url: string): Promise<HTMLVideoElement> {
+  const video = document.createElement("video");
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+
+  const ready = new Promise<HTMLVideoElement | "error">((resolve) => {
     video.onloadeddata = () => resolve(video);
-    video.onerror = () => reject(new Error("この動画を読み込めませんでした。"));
-    video.src = url;
+    video.onerror = () => resolve("error");
   });
+  video.src = url;
+
+  const result = await withTimeout(ready, LOAD_TIMEOUT);
+  if (result === "error") throw new Error(UNSUPPORTED);
+  if (result === null) {
+    throw new Error(
+      `${LOAD_TIMEOUT / 1000} 秒待っても動画が開きませんでした。` + UNSUPPORTED,
+    );
+  }
+  if (!(video.videoWidth > 0 && video.videoHeight > 0)) throw new Error(UNSUPPORTED);
+  return video;
 }
 
 /**
@@ -103,16 +150,22 @@ async function durationOf(video: HTMLVideoElement): Promise<number> {
   return Number.isFinite(found) && found > 0 ? found : 0;
 }
 
-/** 指定の時刻まで送って、その絵が出るまで待つ。 */
-function seekTo(video: HTMLVideoElement, seconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    const done = (): void => {
-      video.removeEventListener("seeked", done);
-      resolve();
+/**
+ * 指定の時刻まで送って、その絵が出るまで待つ。
+ *
+ * 時間切れになっても投げない。1コマ送れなかっただけで全体を落とすより、
+ * そのコマを諦めて先へ進むほうがまし。
+ */
+async function seekTo(video: HTMLVideoElement, seconds: number): Promise<boolean> {
+  const done = new Promise<boolean>((resolve) => {
+    const hit = (): void => {
+      video.removeEventListener("seeked", hit);
+      resolve(true);
     };
-    video.addEventListener("seeked", done);
+    video.addEventListener("seeked", hit);
     video.currentTime = seconds;
   });
+  return (await withTimeout(done, SEEK_TIMEOUT)) ?? false;
 }
 
 let landmarkerPromise: Promise<{
@@ -161,16 +214,23 @@ export async function captureMotion(opts: CaptureOptions): Promise<MotionClip> {
   const url = URL.createObjectURL(file);
 
   try {
-    opts.onProgress?.(0, "動画を読み込んでいます");
+    opts.onProgress?.(0, `動画を読み込んでいます（${(file.size / 1048576).toFixed(1)}MB）`);
     const video = await loadVideo(url);
     throwIfAborted(signal);
 
+    opts.onProgress?.(0.01, `${video.videoWidth}×${video.videoHeight} ／ 長さを調べています`);
     const duration = Math.min(MAX_SECONDS, await durationOf(video));
     if (!(duration > 0)) throw new Error("動画の長さが取れませんでした。");
     throwIfAborted(signal);
 
-    opts.onProgress?.(0.02, "姿勢推定の準備をしています");
-    const landmarker = await getLandmarker(base);
+    opts.onProgress?.(0.02, "姿勢推定の準備をしています（初回は 17MB 落とします）");
+    const landmarker = await withTimeout(getLandmarker(base), MODEL_TIMEOUT);
+    if (!landmarker) {
+      throw new Error(
+        "姿勢推定の読み込みが終わりませんでした（初回は 17MB 落とします）。" +
+          "通信の状態を確かめて、もう一度試してください。",
+      );
+    }
     throwIfAborted(signal);
 
     const scale = Math.min(1, DETECT_SIZE / Math.max(video.videoWidth, video.videoHeight));
@@ -185,9 +245,15 @@ export async function captureMotion(opts: CaptureOptions): Promise<MotionClip> {
     let detected = 0;
     let missed = 0;
 
+    let stalled = 0;
     for (let i = 0; i < total; i++) {
       throwIfAborted(signal);
-      await seekTo(video, i / CAPTURE_FPS);
+      if (!(await seekTo(video, i / CAPTURE_FPS))) stalled++;
+      if (stalled > 5) {
+        throw new Error(
+          "動画のコマ送りが進まなくなりました。別の形式（MP4／H.264）で試してください。",
+        );
+      }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       const result = landmarker.detect(canvas);
@@ -215,7 +281,8 @@ export async function captureMotion(opts: CaptureOptions): Promise<MotionClip> {
 
     if (detected === 0) {
       throw new Error(
-        "人を検出できませんでした。全身が入っていて、明るく、1人だけ写っている動画にしてください。",
+        `${total} コマ調べましたが、人を検出できませんでした。` +
+          "全身（頭から足先まで）が入っていて、明るく、1人だけ写っている動画にしてください。",
       );
     }
 

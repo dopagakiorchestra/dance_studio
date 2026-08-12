@@ -11,7 +11,7 @@ import { blockLabel, generateChoreography, withOverride, type DanceSettings } fr
 import { MOVES, type Mood } from "../dance/moves";
 import { createStage, drawFrame, getPalette, PALETTES, type DrawMode } from "../dance/render";
 import { sampleSkeleton } from "../dance/sampler";
-import { CAPTURE_FPS, CaptureAborted, captureMotion, MAX_SECONDS } from "../dance/capture";
+import { CAPTURE_FPS, CaptureAborted, captureMotion, MAX_SECONDS, playabilityOf } from "../dance/capture";
 import { clipSeconds, type MotionClip } from "../dance/landmarks";
 import {
   FRAME_RATES,
@@ -234,6 +234,17 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   const handleVideo = useCallback(
     async (file?: File) => {
       if (!file) return;
+      // 開けない形式は、読み込みが失敗するのを待たずにこの場で言う
+      if (playabilityOf(file) === "no") {
+        setCapture({
+          kind: "error",
+          message:
+            `このブラウザは ${file.type || "この形式"} を開けません。` +
+            "iPhone の .mov（HEVC）は Chrome や Firefox では開けないことが多いので、" +
+            "MP4（H.264）に変換するか、Safari で開いてみてください。",
+        });
+        return;
+      }
       const controller = new AbortController();
       captureAbort.current = controller;
       setCapture({ kind: "working", ratio: 0, note: "" });
@@ -632,7 +643,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         </p>
         <input
           type="file"
-          accept="video/*"
+          accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi"
           disabled={capture.kind === "working"}
           onChange={(e) => void handleVideo(e.target.files?.[0])}
         />
