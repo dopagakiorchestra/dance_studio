@@ -315,6 +315,54 @@ export function rotate(m: Mat3, v: Vec3): Vec3 {
   return apply(m, v);
 }
 
+/** 回転行列の合成。a を掛けてから b（＝ a·b）。 */
+export function composeRot(a: Mat3, b: Mat3): Mat3 {
+  return mul(a, b);
+}
+
+/** 回転行列の逆。直交行列なので転置でよい。 */
+export function invertRot(m: Mat3): Mat3 {
+  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+}
+
+/**
+ * 回転行列を XYZ オイラー角（度）に戻す。`rotationMatrix` の逆。
+ *
+ * 合成順が Ry・Rx・Rz なので、行列の成分は
+ *   m[5] = -sin(rx), m[3] = cos(rx)sin(rz), m[4] = cos(rx)cos(rz),
+ *   m[2] = sin(ry)cos(rx), m[8] = cos(ry)cos(rx)
+ * になる。cos(rx) が 0（＝ rx が ±90度）だと ry と rz が同じ回転を表して
+ * しまうので、そのときは rz を 0 に決めて ry へ寄せる。
+ */
+export function eulerOf(m: Mat3): Rot {
+  const DEGREES = 180 / Math.PI;
+  const sx = Math.min(1, Math.max(-1, -m[5]));
+  const rx = Math.asin(sx);
+  const cx = Math.cos(rx);
+  if (Math.abs(cx) < 1e-6) {
+    return [rx * DEGREES, Math.atan2(-m[6], m[0]) * DEGREES, 0];
+  }
+  return [rx * DEGREES, Math.atan2(m[2], m[8]) * DEGREES, Math.atan2(m[3], m[4]) * DEGREES];
+}
+
+/**
+ * 関節ごとの見た目の半径。描かれるパーツの端の太さのうち大きいほうを取る。
+ *
+ * カプセルの端は球なので、その関節の一番低い点は必ず「関節の位置の真下、
+ * 半径のぶんだけ下」になる。接地の判定にも画角の余白にもこれを使う。
+ */
+export function jointRadiusOf(body: Body): Partial<Record<JointName, number>> {
+  const r: Partial<Record<JointName, number>> = {};
+  for (const limb of limbsOf(body)) {
+    r[limb.from] = Math.max(r[limb.from] ?? 0, limb.r0);
+    r[limb.to] = Math.max(r[limb.to] ?? 0, limb.r1);
+  }
+  const head = headRadiusOf(body);
+  r.head = Math.max(r.head ?? 0, head);
+  r.headTop = Math.max(r.headTop ?? 0, head);
+  return r;
+}
+
 /**
  * ポーズを左右反転する。
  *

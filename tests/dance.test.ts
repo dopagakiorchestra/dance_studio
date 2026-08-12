@@ -10,11 +10,13 @@ import {
 } from "../src/dance/choreo";
 import { getMove, MOVES } from "../src/dance/moves";
 import { createStage, frameBounds } from "../src/dance/render";
-import { samplePose, sampleSkeleton } from "../src/dance/sampler";
+import { plantFeet } from "../src/dance/ground";
+import { samplePose, sampleSkeleton, type SampleOptions } from "../src/dance/sampler";
 import {
   DEFAULT_BODY,
   headToBody,
   hipHeightOf,
+  jointRadiusOf,
   restHeightOf,
   type Body,
   HIP_HEIGHT,
@@ -834,6 +836,171 @@ describe("体型", () => {
         expect(bounds.maxY).toBeLessThanOrEqual(1280.5);
       }
     }
+  });
+});
+
+describe("接地", () => {
+  const choreo = generateChoreography(32, DEFAULT_DANCE);
+  const opts = (over: Partial<SampleOptions> = {}): SampleOptions => ({
+    bounce: 0.6,
+    chain: 0.6,
+    snap: 0.75,
+    groove: 0.7,
+    body: DEFAULT_BODY,
+    ...over,
+  });
+
+  /** 足の裏の最下点。カプセルの端は球なので、関節の真下・半径ぶん下が最低点。 */
+  const lowestOf = (
+    pos: Record<JointName, { x: number; y: number; z: number }>,
+    body: Body = DEFAULT_BODY,
+  ): number => {
+    const r = jointRadiusOf(body);
+    return Math.min(
+      pos.footL.y - (r.footL ?? 0),
+      pos.toeL.y - (r.toeL ?? 0),
+      pos.footR.y - (r.footR ?? 0),
+      pos.toeR.y - (r.toeR ?? 0),
+    );
+  };
+
+  const lowestOverLoop = (o: SampleOptions, body?: Body): number => {
+    let lowest = Infinity;
+    for (let count = 0; count < choreo.totalCounts; count += 0.05) {
+      lowest = Math.min(lowest, lowestOf(sampleSkeleton(choreo, count, o).pos, body));
+    }
+    return lowest;
+  };
+
+  it("床にめり込まない", () => {
+    // 接地を入れる前は腰高の 10% 以上めり込んでいた。脚は骨盤からぶら下がって
+    // いるだけで、床という概念が無かった
+    expect(lowestOverLoop(opts({ ground: false }))).toBeLessThan(-0.05);
+    // 残るのは、脚を伸ばし切っても届かない一瞬だけ
+    expect(lowestOverLoop(opts())).toBeGreaterThan(-0.01 * HIP_HEIGHT);
+  });
+
+  it("ノリを入れても足の高さがほとんど変わらない", () => {
+    // 沈み込みも横の体重移動も、それまでは「腰を動かした分を太ももの角度で
+    // 打ち消す」近似だった。縦で 0.069、横で 0.033 のずれが残っていて、
+    // これが接地の甘さの正体だった。IK で解くと 0.003 / 0.001 まで落ちる。
+    // 0 にならないのは、脚を伸ばし切っても床へ届かない一瞬があるため
+    for (const groove of [0, 1]) {
+      let worst = 0;
+      for (let count = 0; count < 8; count += 0.05) {
+        const still = lowestOf(sampleSkeleton(choreo, count, opts({ bounce: 0, groove })).pos);
+        const moving = lowestOf(sampleSkeleton(choreo, count, opts({ bounce: 1, groove })).pos);
+        worst = Math.max(worst, Math.abs(still - moving));
+      }
+      expect(worst).toBeLessThan(0.005);
+    }
+  });
+
+  it("接地している足の裏が床と平行になる", () => {
+    // 骨格の足はつま先のほうが低い（描かれる太さまで含めると 7 度前下がり）。
+    // そのまま置くとつま先立ちに見える
+    const tilts = (ground: boolean): number[] => {
+      const out: number[] = [];
+      const r = jointRadiusOf(DEFAULT_BODY);
+      for (let count = 0; count < choreo.totalCounts; count += 0.05) {
+        const { pos } = sampleSkeleton(choreo, count, opts({ ground }));
+        for (const [ankle, toe] of [
+          ["footL", "toeL"],
+          ["footR", "toeR"],
+        ] as Array<[JointName, JointName]>) {
+          const heelY = pos[ankle].y - (r[ankle] ?? 0);
+          const toeY = pos[toe].y - (r[toe] ?? 0);
+          if (Math.min(heelY, toeY) > 0.01) continue;
+          const run = Math.hypot(pos[toe].x - pos[ankle].x, pos[toe].z - pos[ankle].z);
+          out.push(Math.abs((Math.atan2(toeY - heelY, run) * 180) / Math.PI));
+        }
+      }
+      out.sort((a, b) => a - b);
+      return out;
+    };
+    const before = tilts(false);
+    const after = tilts(true);
+    // 中央値で見る。振り付けが意図してつま先を伸ばしているところは残す
+    expect(before[before.length >> 1]).toBeGreaterThan(10);
+    expect(after[after.length >> 1]).toBeLessThan(2);
+  });
+
+  it("上げた足には触らない", () => {
+    // 接地とみなす帯を広げすぎると、ステップで上げた足まで床へ引かれて
+    // 振りが潰れる。一番高く上げた足の高さが変わらないことで見る
+    const highest = (ground: boolean): number => {
+      let top = -Infinity;
+      for (let count = 0; count < choreo.totalCounts; count += 0.05) {
+        const { pos } = sampleSkeleton(choreo, count, opts({ ground }));
+        top = Math.max(top, pos.footL.y, pos.footR.y);
+      }
+      return top;
+    };
+    expect(highest(true)).toBeGreaterThan(highest(false) * 0.95);
+  });
+
+  it("IK で骨の長さが変わらない", () => {
+    // 位置合わせを回転ではなく座標で当てにいくと、脚が伸び縮みする
+    const rest = boneLengths({});
+    for (const count of [0, 1.1, 4.3, 9.7, 16.2, 24.4]) {
+      const { pos } = sampleSkeleton(choreo, count, opts());
+      for (const [a, b] of [
+        ["thighL", "shinL"],
+        ["shinL", "calfL"],
+        ["calfL", "footL"],
+        ["thighR", "shinR"],
+        ["footR", "toeR"],
+      ] as Array<[JointName, JointName]>) {
+        const length = Math.hypot(pos[b].x - pos[a].x, pos[b].y - pos[a].y, pos[b].z - pos[a].z);
+        const want = rest.get(`${a}-${b}`);
+        if (want !== undefined) expect(length).toBeCloseTo(want, 6);
+      }
+    }
+  });
+
+  it("膝が逆に折れない", () => {
+    for (let count = 0; count < choreo.totalCounts; count += 0.05) {
+      const pose = plantFeet(samplePose(choreo, count, opts()), DEFAULT_BODY);
+      // すねの X 回転は「＋で膝が後ろへ折れる」。負になると膝が前へ折れる
+      expect(pose.j?.shinL?.[0] ?? 0).toBeGreaterThan(-1);
+      expect(pose.j?.shinR?.[0] ?? 0).toBeGreaterThan(-1);
+    }
+  });
+
+  it("どの体型でも床に立つ", () => {
+    for (const body of [
+      DEFAULT_BODY,
+      { head: 1.4, legs: 0.7, arms: 0.7, build: 1.4, shoulders: 0.7 },
+      { head: 0.7, legs: 1.4, arms: 1.4, build: 0.7, shoulders: 1.4 },
+    ] as Body[]) {
+      expect(lowestOverLoop(opts({ body }), body)).toBeGreaterThan(-0.01 * HIP_HEIGHT);
+    }
+  });
+
+  it("接地を入れても動きが飛ばない", () => {
+    // IK は角度を組み直すので、境目で解が飛ぶと1コマだけ脚が跳ねる。
+    // 接地なしと同じ滑らかさに収まっていることを見る
+    const peak = (ground: boolean): number => {
+      const step = 0.02;
+      let worst = 0;
+      let prev = sampleSkeleton(choreo, -step, opts({ ground })).pos;
+      for (let count = 0; count <= choreo.totalCounts; count += step) {
+        const cur = sampleSkeleton(choreo, count, opts({ ground })).pos;
+        for (const name of JOINT_NAMES) {
+          worst = Math.max(
+            worst,
+            Math.hypot(
+              cur[name].x - prev[name].x,
+              cur[name].y - prev[name].y,
+              cur[name].z - prev[name].z,
+            ),
+          );
+        }
+        prev = cur;
+      }
+      return worst;
+    };
+    expect(peak(true)).toBeLessThan(peak(false) * 1.1);
   });
 });
 

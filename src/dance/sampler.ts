@@ -14,8 +14,10 @@
 
 import { getMove, type Ease, type Move } from "./moves";
 import type { ChoreoBlock, Choreography } from "./choreo";
+import { plantFeet } from "./ground";
 import {
   blendPose,
+  DEFAULT_BODY,
   HIP_HEIGHT,
   type Body,
   mirrorPose,
@@ -435,6 +437,11 @@ export interface SampleOptions {
   body?: Body;
   /** ノリの向き 0..1。0 が縦（沈み込み）、1 が横（重心の左右移動）。 */
   groove?: number;
+  /**
+   * 足を床に置く処理を通すか。既定は通す。
+   * 切れるようにしてあるのは、直る前と後を比べて測るため。
+   */
+  ground?: boolean;
 }
 
 /**
@@ -535,11 +542,18 @@ export function samplePose(
   return applyGroove(pose, pos, opts.bounce, snap, opts.groove ?? 0);
 }
 
-/** ポーズを解いてワールド座標まで求める。描画側の入口。 */
+/**
+ * ポーズを解いてワールド座標まで求める。描画側の入口。
+ *
+ * 接地の解決はここで掛ける。`samplePose` は振り付けそのものを返す層に
+ * しておきたいので、床の都合を混ぜない。
+ */
 export function sampleSkeleton(
   choreo: Choreography,
   countPos: number,
   opts?: SampleOptions,
 ): PosedSkeleton {
-  return solvePose(samplePose(choreo, countPos, opts), opts?.body);
+  const body = opts?.body ?? DEFAULT_BODY;
+  const pose = samplePose(choreo, countPos, opts);
+  return solvePose(opts?.ground === false ? pose : plantFeet(pose, body), body);
 }

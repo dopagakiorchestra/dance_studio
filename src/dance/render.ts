@@ -16,6 +16,7 @@ import { sampleSkeleton, type SampleOptions } from "./sampler";
 import {
   DEFAULT_BODY,
   headRadiusOf,
+  jointRadiusOf,
   limbsOf,
   type Body,
   JOINT_NAMES,
@@ -102,22 +103,6 @@ function normalize(p: Vec3): { u: number; v: number; d: number } {
   const d = depthOf(p);
   const k = CAM.z / d;
   return { u: (p.x - CAM.x) * k, v: (p.y - CAM.y) * k, d };
-}
-
-/**
- * 関節ごとの見た目の半径。画角を決めるときにこのぶんも余白として見る。
- * 体型で太さと頭の大きさが変わるので、そのつど作り直す。
- */
-function jointRadiusOf(body: Body): Partial<Record<JointName, number>> {
-  const r: Partial<Record<JointName, number>> = {};
-  for (const limb of limbsOf(body)) {
-    r[limb.from] = Math.max(r[limb.from] ?? 0, limb.r0);
-    r[limb.to] = Math.max(r[limb.to] ?? 0, limb.r1);
-  }
-  const head = headRadiusOf(body);
-  r.head = Math.max(r.head ?? 0, head);
-  r.headTop = Math.max(r.headTop ?? 0, head);
-  return r;
 }
 
 /**
@@ -321,22 +306,45 @@ export function drawFrame(
   ctx.restore();
 }
 
-/** 足元の影。接地感が出ると、変換後もキャラが浮いて見えにくくなる。 */
+/** 足が床から離れるとき、影が消えきる高さ。 */
+const SHADOW_FADE = 0.3;
+
+/**
+ * 足元の影。足ごとに1つずつ置く。
+ *
+ * 以前は腰の真下にひとつだけ楕円を置いていたが、それだと体がどこに乗って
+ * いるのかが出ない。足ごとに置くと、どちらの足に体重があるか・いつ床から
+ * 離れたかが影の濃さで読めるようになる。接地の解決を入れた効果は、床を
+ * 描いていない以上ここでしか見えない。
+ */
 function drawShadow(
   ctx: CanvasRenderingContext2D,
   skeleton: PosedSkeleton,
   stage: Stage,
   palette: StagePalette,
 ): void {
-  const hips = skeleton.pos.hips;
-  const ground = project(stage, { x: hips.x, y: 0, z: hips.z });
-  const rx = 0.3 * ground.k;
-  if (rx <= 0.5) return;
   ctx.save();
   ctx.fillStyle = palette.shadow;
-  ctx.beginPath();
-  ctx.ellipse(ground.x, ground.y, rx, rx * 0.24, 0, 0, Math.PI * 2);
-  ctx.fill();
+  for (const [ankle, toe] of [
+    ["footL", "toeL"],
+    ["footR", "toeR"],
+  ] as Array<[JointName, JointName]>) {
+    const a = skeleton.pos[ankle];
+    const b = skeleton.pos[toe];
+    const height = Math.max(0, Math.min(a.y, b.y));
+    if (height >= SHADOW_FADE) continue;
+
+    // 離れるほど薄く、わずかに広がる。実際の影と同じ振る舞い
+    const away = height / SHADOW_FADE;
+    const ground = project(stage, { x: (a.x + b.x) / 2, y: 0, z: (a.z + b.z) / 2 });
+    const rx = (0.15 + 0.08 * away) * ground.k;
+    if (rx <= 0.5) continue;
+
+    ctx.globalAlpha = 1 - away;
+    ctx.beginPath();
+    ctx.ellipse(ground.x, ground.y, rx, rx * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
