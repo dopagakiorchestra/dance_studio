@@ -39,6 +39,8 @@ export interface StagePalette {
   body: string;
   outline: string;
   shadow: string;
+  /** 床を描くときの色。背景とは僅かに差をつける。 */
+  floor: string;
 }
 
 export const PALETTES: StagePalette[] = [
@@ -49,6 +51,7 @@ export const PALETTES: StagePalette[] = [
     body: "#eef2fb",
     outline: "#8090b8",
     shadow: "rgba(0,0,0,0.3)",
+    floor: "#111b33",
   },
   {
     id: "mono",
@@ -57,6 +60,7 @@ export const PALETTES: StagePalette[] = [
     body: "#ffffff",
     outline: "#8a8a8a",
     shadow: "rgba(255,255,255,0.14)",
+    floor: "#1a1a1a",
   },
   {
     id: "studio",
@@ -65,6 +69,7 @@ export const PALETTES: StagePalette[] = [
     body: "#2b303c",
     outline: "#0a0d14",
     shadow: "rgba(0,0,0,0.16)",
+    floor: "#dedbd3",
   },
   {
     id: "chroma",
@@ -73,6 +78,7 @@ export const PALETTES: StagePalette[] = [
     body: "#f8fafc",
     outline: "#7d8ba0",
     shadow: "rgba(0,0,0,0.22)",
+    floor: "#00a03a",
   },
 ];
 
@@ -205,6 +211,8 @@ export interface DrawOptions {
   shadow?: boolean;
   /** 輪郭線を描くか。 */
   outline?: boolean;
+  /** 床を描くか。既定は描かない。 */
+  floor?: boolean;
 }
 
 /** 1フレーム分を描く。canvas は毎回背景で塗り潰す。 */
@@ -221,6 +229,7 @@ export function drawFrame(
   ctx.fillStyle = palette.background;
   ctx.fillRect(0, 0, stage.width, stage.height);
 
+  if (opts.floor) drawFloor(ctx, stage, palette);
   if (opts.shadow !== false) drawShadow(ctx, skeleton, stage, palette);
 
   const lineWidth = Math.max(1.5, stage.unit * 0.006);
@@ -303,6 +312,26 @@ export function drawFrame(
   parts.sort((a, b) => b.depth - a.depth);
   for (const part of parts) part.paint();
 
+  ctx.restore();
+}
+
+/**
+ * 床。y=0 の平面を、地平線から下へ塗るだけ。
+ *
+ * 既定では描かない。単色フラットな背景のほうが映像変換は素直に通るはずで、
+ * 床の線が何に化けるかは実際に通してみないと分からないため。ただし床がある
+ * ほうが、変換側が「どこが地面か」を掴めて安定する可能性もあるので、
+ * 試せるように残してある。
+ *
+ * この投影では、y=0 の平面は遠ざかるほど v が 0 に近づく。つまり地平線は
+ * ちょうど v=0 の高さになる。
+ */
+function drawFloor(ctx: CanvasRenderingContext2D, stage: Stage, palette: StagePalette): void {
+  const horizon = stage.height / 2 + stage.centerV * stage.unit;
+  if (horizon >= stage.height) return;
+  ctx.save();
+  ctx.fillStyle = palette.floor;
+  ctx.fillRect(0, Math.max(0, horizon), stage.width, stage.height - Math.max(0, horizon));
   ctx.restore();
 }
 

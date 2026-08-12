@@ -83,6 +83,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   const [fps, setFps] = useState<FrameRate>(30);
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
   const [previewRunning, setPreviewRunning] = useState(true);
+  const [floor, setFloor] = useState(false);
 
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const exportRef = useRef<HTMLCanvasElement | null>(null);
@@ -123,7 +124,10 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     [previewSize, choreo, sampleOpts],
   );
 
-  const drawOptions = useMemo(() => ({ palette, body: project.body }), [palette, project.body]);
+  const drawOptions = useMemo(
+    () => ({ palette, body: project.body, floor }),
+    [palette, project.body, floor],
+  );
 
   // 描画ループは張りっぱなしにして、変わる値だけをここから流し込む。
   // 再生位置が更新されるたびにループを組み直すと、毎フレーム張り替えになる。
@@ -200,7 +204,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         canvas,
         choreo,
         stage,
-        draw: { palette, body: project.body },
+        draw: { palette, body: project.body, floor },
         bounce: dance.bounce,
         groove: dance.groove,
         chain: dance.chain,
@@ -245,6 +249,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     loopBeats,
     project.repeats,
     palette,
+    floor,
     project.body,
     beatSeconds,
     fps,
@@ -375,6 +380,18 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="field">
+                <label htmlFor="dance-floor">床</label>
+                <label className="checkline" htmlFor="dance-floor">
+                  <input
+                    id="dance-floor"
+                    type="checkbox"
+                    checked={floor}
+                    onChange={(e) => setFloor(e.target.checked)}
+                  />
+                  描く
+                </label>
               </div>
               <div className="field">
                 <label htmlFor="dance-fps">フレームレート</label>
