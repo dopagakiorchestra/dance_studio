@@ -12,6 +12,7 @@
  */
 
 import type { Choreography } from "./choreo";
+import { drawDepthFrame } from "./depth";
 import { sampleSkeleton, type SampleOptions } from "./sampler";
 import {
   DEFAULT_BODY,
@@ -94,10 +95,19 @@ export interface Stage {
   unit: number;
   centerU: number;
   centerV: number;
+  /**
+   * 振り付け全体で一番手前・一番奥に来る体の表面の、カメラからの距離。
+   *
+   * 深度マップの明るさをここに正規化する。**1コマごとに正規化してはいけない。**
+   * 手が前に出た瞬間だけ明るさの基準が変わって、動画全体が脈打つ。
+   * 画角と同じで、1本の動画の中では固定する。
+   */
+  depthNear: number;
+  depthFar: number;
 }
 
 /** カメラから見た奥行き。0 以下にならないように下限を置く。 */
-function depthOf(p: Vec3): number {
+export function depthOf(p: Vec3): number {
   return Math.max(0.6, CAM.z - p.z);
 }
 
@@ -127,6 +137,8 @@ export function createStage(
   let uMax = -Infinity;
   let vMin = Infinity;
   let vMax = -Infinity;
+  let dMin = Infinity;
+  let dMax = -Infinity;
 
   // 走査は細かく取る。ダイナミクスを上げると動きが速くなり、粗い刻みでは
   // 行き過ぎた一瞬の極値を跨いで見落とす。見落とすと本番でそのコマだけ
@@ -138,15 +150,21 @@ export function createStage(
     const skeleton = sampleSkeleton(choreo, i * step, opts);
     for (const name of JOINT_NAMES) {
       const { u, v, d } = normalize(skeleton.pos[name]);
-      const margin = ((radius[name] ?? 0) * CAM.z) / d;
+      const r = radius[name] ?? 0;
+      const margin = (r * CAM.z) / d;
       uMin = Math.min(uMin, u - margin);
       uMax = Math.max(uMax, u + margin);
       vMin = Math.min(vMin, v - margin);
       vMax = Math.max(vMax, v + margin);
+      // 深度は関節の中心ではなく、球の表面の手前・奥まで見る
+      dMin = Math.min(dMin, d - r);
+      dMax = Math.max(dMax, d + r);
     }
   }
 
-  if (!Number.isFinite(uMin)) return { width, height, unit: height * 0.4, centerU: 0, centerV: 0 };
+  if (!Number.isFinite(uMin)) {
+    return { width, height, unit: height * 0.4, centerU: 0, centerV: 0, depthNear: 3, depthFar: 4 };
+  }
 
   const spanU = Math.max(0.1, uMax - uMin);
   const spanV = Math.max(0.1, vMax - vMin);
@@ -156,10 +174,12 @@ export function createStage(
     unit: Math.min((width * FILL) / spanU, (height * FILL) / spanV),
     centerU: (uMin + uMax) / 2,
     centerV: (vMin + vMax) / 2,
+    depthNear: dMin,
+    depthFar: Math.max(dMax, dMin + 0.01),
   };
 }
 
-interface Screen {
+export interface Screen {
   x: number;
   y: number;
   /** 奥行き。大きいほど遠い。 */
@@ -168,7 +188,7 @@ interface Screen {
   k: number;
 }
 
-function project(stage: Stage, p: Vec3): Screen {
+export function project(stage: Stage, p: Vec3): Screen {
   const { u, v, d } = normalize(p);
   return {
     x: stage.width / 2 + (u - stage.centerU) * stage.unit,
@@ -203,8 +223,18 @@ interface Drawable {
   paint: () => void;
 }
 
+/**
+ * 描き方。
+ *
+ * - `depth`: 深度マップ。カメラからの距離を明るさにする。既定
+ * - `mannequin`: マネキンのベタ塗り。深度に切り替える前からある絵
+ */
+export type DrawMode = "depth" | "mannequin";
+
 export interface DrawOptions {
   palette: StagePalette;
+  /** 描き方。省略時は深度マップ。 */
+  mode?: DrawMode;
   /** 体型。省略時は標準。 */
   body?: Body;
   /** 接地の影を描くか。 */
@@ -222,8 +252,13 @@ export function drawFrame(
   stage: Stage,
   opts: DrawOptions,
 ): void {
-  const { palette } = opts;
   const body = opts.body ?? DEFAULT_BODY;
+  if ((opts.mode ?? "depth") === "depth") {
+    drawDepthFrame(ctx, skeleton, stage, { body, floor: opts.floor });
+    return;
+  }
+
+  const { palette } = opts;
   const headRadius = headRadiusOf(body);
   ctx.save();
   ctx.fillStyle = palette.background;

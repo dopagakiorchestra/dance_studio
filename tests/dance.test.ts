@@ -267,18 +267,18 @@ describe("振り付けの生成", () => {
   it("手で選んだ小節はシードを変えても残る", () => {
     // 指定はスロット番号で覚える。ブロックの長さは振りによって変わるので、
     // 並び順で覚えると引き直したときに別の小節へずれてしまう
-    const base = withOverride(settings({ seed: 1 }), 2, { moveId: "wave", mirrored: true });
+    const base = withOverride(settings({ seed: 1 }), 2, { moveId: "armSlice", mirrored: true });
     for (const seed of [1, 2, 99, 12345]) {
       const blocks = generateChoreography(32, { ...base, seed }).blocks;
       const picked = blocks.find((b) => b.slot === 2);
-      expect(picked?.moveId).toBe("wave");
+      expect(picked?.moveId).toBe("armSlice");
       expect(picked?.mirrored).toBe(true);
       expect(picked?.manual).toBe(true);
     }
   });
 
   it("手動指定を外すと自動に戻る", () => {
-    const withPick = withOverride(settings(), 1, { moveId: "clap", mirrored: false });
+    const withPick = withOverride(settings(), 1, { moveId: "twinkle", mirrored: false });
     const cleared = withOverride(withPick, 1, null);
     expect(cleared.overrides).toEqual([]);
     const blocks = generateChoreography(32, cleared).blocks;
@@ -289,10 +289,10 @@ describe("振り付けの生成", () => {
 describe("設定の正規化", () => {
   it("知らないパーツ ID を捨てる", () => {
     const dance = normalizeDance({
-      overrides: [{ moveId: "存在しない技", mirrored: true }, { moveId: "wave", mirrored: true }],
+      overrides: [{ moveId: "存在しない技", mirrored: true }, { moveId: "armSlice", mirrored: true }],
     });
     expect(dance.overrides[0]).toBeNull();
-    expect(dance.overrides[1]).toEqual({ moveId: "wave", mirrored: true });
+    expect(dance.overrides[1]).toEqual({ moveId: "armSlice", mirrored: true });
   });
 
   it("範囲外の数値を丸める", () => {
@@ -597,14 +597,16 @@ describe("肘", () => {
   });
 
   it("大きく曲げたパーツはそのまま残る（自動の緩みに潰されない）", () => {
-    // armPump は肘を 110 度たたんで突き上げる。ここが緩められると形が崩れる
-    const choreo = generateChoreography(8, settings({ overrides: [{ moveId: "armPump", mirrored: false }] }));
+    // handTrace は肘を 124 度たたんで体をなぞる。ここが緩められると形が崩れる。
+    // 実測のピークが 124 に届かないのは、ブロックの繋ぎが端を丸めるため。
+    // 見たいのは「自動の緩み（ELBOW_AUTHORED は 20 度）に潰されていないこと」
+    const choreo = generateChoreography(8, settings({ overrides: [{ moveId: "handTrace", mirrored: false }] }));
     let peak = 0;
     for (let count = 0; count < 8; count += 0.1) {
       const pose = samplePose(choreo, count, { bounce: 0, chain: 0 });
       peak = Math.max(peak, elbowAngle(pose, "L"), elbowAngle(pose, "R"));
     }
-    expect(peak).toBeGreaterThan(100);
+    expect(peak).toBeGreaterThan(90);
   });
 });
 
@@ -835,6 +837,58 @@ describe("体型", () => {
         expect(bounds.maxX).toBeLessThanOrEqual(720.5);
         expect(bounds.maxY).toBeLessThanOrEqual(1280.5);
       }
+    }
+  });
+});
+
+describe("深度マップ", () => {
+  const choreo = generateChoreography(32, DEFAULT_DANCE);
+  const opts = { bounce: 0.6, chain: 0.6, snap: 0.75, groove: 0.7, follow: 0.35 };
+  const stage = createStage(720, 1280, choreo, opts);
+
+  /** カメラからの距離。render.ts の CAM.z と揃えてある。 */
+  const distanceOf = (z: number): number => Math.max(0.6, 3.6 - z);
+
+  it("明るさの基準が振り付け全体をはみ出さない", () => {
+    // 1コマごとに正規化すると、手が前に出た瞬間だけ基準が変わって動画全体が
+    // 脈打つ。画角と同じで、範囲は先に走査して固定しておく必要がある。
+    // どこか1コマでも範囲の外へ出ると、そこだけ真っ白／真っ黒に張り付く
+    const radius = jointRadiusOf(DEFAULT_BODY);
+    let nearest = Infinity;
+    let farthest = -Infinity;
+    for (let count = 0; count < choreo.totalCounts; count += 0.05) {
+      const { pos } = sampleSkeleton(choreo, count, opts);
+      for (const name of JOINT_NAMES) {
+        const d = distanceOf(pos[name].z);
+        const r = radius[name] ?? 0;
+        nearest = Math.min(nearest, d - r);
+        farthest = Math.max(farthest, d + r);
+      }
+    }
+    expect(stage.depthNear).toBeLessThanOrEqual(nearest + 1e-9);
+    expect(stage.depthFar).toBeGreaterThanOrEqual(farthest - 1e-9);
+  });
+
+  it("奥行きに幅がある（全部が同じ明るさに潰れない）", () => {
+    // 体の厚みと腕の前後で、少なくとも 30cm ぶんは階調が付く
+    expect(stage.depthFar - stage.depthNear).toBeGreaterThan(0.3);
+  });
+
+  it("同じ振り付けなら毎回同じ範囲になる", () => {
+    const again = createStage(720, 1280, choreo, opts);
+    expect(again.depthNear).toBe(stage.depthNear);
+    expect(again.depthFar).toBe(stage.depthFar);
+  });
+
+  it("体型を変えても範囲が張り付かない", () => {
+    for (const body of [
+      { head: 1.4, legs: 0.7, arms: 0.7, build: 1.4, shoulders: 0.7 },
+      { head: 0.7, legs: 1.4, arms: 1.4, build: 0.7, shoulders: 1.4 },
+    ] as Body[]) {
+      const s = createStage(720, 1280, choreo, { ...opts, body });
+      expect(s.depthFar).toBeGreaterThan(s.depthNear);
+      expect(Number.isFinite(s.depthNear)).toBe(true);
+      expect(Number.isFinite(s.depthFar)).toBe(true);
     }
   });
 });

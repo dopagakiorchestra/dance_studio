@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { blockLabel, generateChoreography, withOverride, type DanceSettings } from "../dance/choreo";
 import { MOVES, type Mood } from "../dance/moves";
-import { createStage, drawFrame, getPalette, PALETTES } from "../dance/render";
+import { createStage, drawFrame, getPalette, PALETTES, type DrawMode } from "../dance/render";
 import { sampleSkeleton } from "../dance/sampler";
 import {
   FRAME_RATES,
@@ -84,6 +84,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
   const [previewRunning, setPreviewRunning] = useState(true);
   const [floor, setFloor] = useState(false);
+  const [drawMode, setDrawMode] = useState<DrawMode>("depth");
 
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const exportRef = useRef<HTMLCanvasElement | null>(null);
@@ -126,8 +127,8 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
   );
 
   const drawOptions = useMemo(
-    () => ({ palette, body: project.body, floor }),
-    [palette, project.body, floor],
+    () => ({ palette, body: project.body, floor, mode: drawMode }),
+    [palette, project.body, floor, drawMode],
   );
 
   // 描画ループは張りっぱなしにして、変わる値だけをここから流し込む。
@@ -205,7 +206,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         canvas,
         choreo,
         stage,
-        draw: { palette, body: project.body, floor },
+        draw: { palette, body: project.body, floor, mode: drawMode },
         bounce: dance.bounce,
         groove: dance.groove,
         chain: dance.chain,
@@ -253,6 +254,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     project.repeats,
     palette,
     floor,
+    drawMode,
     project.body,
     beatSeconds,
     fps,
@@ -383,19 +385,32 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
                 </select>
               </div>
               <div className="field">
-                <label htmlFor="dance-palette">配色</label>
+                <label htmlFor="dance-mode">描き方</label>
                 <select
-                  id="dance-palette"
-                  value={paletteId}
-                  onChange={(e) => setPaletteId(e.target.value)}
+                  id="dance-mode"
+                  value={drawMode}
+                  onChange={(e) => setDrawMode(e.target.value as DrawMode)}
                 >
-                  {PALETTES.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+                  <option value="depth">深度マップ</option>
+                  <option value="mannequin">マネキン</option>
                 </select>
               </div>
+              {drawMode === "mannequin" && (
+                <div className="field">
+                  <label htmlFor="dance-palette">配色</label>
+                  <select
+                    id="dance-palette"
+                    value={paletteId}
+                    onChange={(e) => setPaletteId(e.target.value)}
+                  >
+                    {PALETTES.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="field">
                 <label htmlFor="dance-floor">床</label>
                 <label className="checkline" htmlFor="dance-floor">
