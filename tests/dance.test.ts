@@ -885,7 +885,9 @@ describe("指揮", () => {
       const choreo = {
         seed: 1,
         totalCounts: move.counts,
-        blocks: [{ moveId: id, mirrored: false, startCount: 0, counts: move.counts, slot: 0 }],
+        blocks: [
+          { moveId: id, mirrored: false, manual: false, startCount: 0, counts: move.counts, slot: 0 },
+        ],
       };
       const written = move.keyframes.map((f) => f.pose.root?.y ?? HIP_HEIGHT);
       const wrote = Math.max(...written) - Math.min(...written);
