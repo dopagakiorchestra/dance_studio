@@ -181,6 +181,29 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     patch({ seed: 1 + Math.floor(Math.random() * 999998) });
   }, [patch]);
 
+  /**
+   * 手で選ばれている小節の数。
+   *
+   * 引き直しはここを飛ばすので、全部が手動だと「押しても何も変わらない」に
+   * なる。しかも左右反転のチェックだけでも手動になるので、本人に手で選んだ
+   * つもりが無いまま全部が固定されていることがある。数を出しておかないと
+   * 押しても効かない理由が分からない。
+   */
+  const pinned = useMemo(() => choreo.blocks.filter((b) => b.manual).length, [choreo]);
+
+  const clearPinned = useCallback(() => patch({ overrides: [] }), [patch]);
+
+  /** 手で選ばれている小節のうち、いま選んでいる系統から外れているもの。 */
+  const offStyle = useMemo(
+    () =>
+      choreo.blocks.filter((b) => {
+        if (!b.manual || dance.styles.length === 0) return false;
+        const mood = MOVES.find((m) => m.id === b.moveId)?.mood;
+        return mood === undefined || !dance.styles.includes(mood);
+      }).length,
+    [choreo, dance.styles],
+  );
+
   const videoFormat = useMemo(() => pickVideoFormat(), []);
   const canRecord =
     videoFormat !== null &&
@@ -290,7 +313,21 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
               <button className="btn" onClick={reroll}>
                 🎲 振り付けを引き直す
               </button>
+              <button className="btn" onClick={clearPinned} disabled={pinned === 0}>
+                ↺ 手で選んだ小節を自動に戻す
+              </button>
             </div>
+            {pinned > 0 && (
+              <p className="hint warn">
+                {pinned} 小節を手で選んでいます。そこは引き直しても変わりません。
+                {offStyle > 0 &&
+                  ` うち ${offStyle} 小節は、いま選んでいる系統の外の振りです。`}
+                {pinned === choreo.blocks.length &&
+                  " 全部の小節が手で選ばれているので、引き直しても何も変わりません。"}
+                {" "}
+                左右反転のチェックを付け替えただけでも、その小節は手で選んだ扱いになります。
+              </p>
+            )}
             <p className="hint">
               シード {dance.seed} ／ {choreo.blocks.length} ブロック（{loopBeats} 拍）
               {playPosition !== null && " ／ 音源に同期中"}

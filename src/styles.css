@@ -310,3 +310,8 @@ input[type="file"] {
   flex-wrap: wrap;
   gap: 0.35rem 1rem;
 }
+
+/* 気づいてほしい注意書き（引き直しが効かない理由など） */
+.hint.warn {
+  color: #f0c674;
+}

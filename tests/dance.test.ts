@@ -229,6 +229,41 @@ describe("振り付けの生成", () => {
     }
   });
 
+  it("全部の小節を手で選ぶと、引き直しても変わらない", () => {
+    // これ自体は仕様（手で選んだところは残す）。ただし画面に何も出ないと
+    // 「引き直すボタンが壊れている」としか見えないので、UI 側で手動の小節数を
+    // 出して、まとめて自動に戻せるようにしてある
+    const slots = blockLayout(32).length;
+    const overrides = Array.from({ length: slots }, () => ({
+      moveId: "conduct4",
+      mirrored: false,
+    }));
+    const a = generateChoreography(32, settings({ seed: 1, overrides }));
+    const b = generateChoreography(32, settings({ seed: 999, overrides }));
+    expect(b.blocks.map((x) => x.moveId)).toEqual(a.blocks.map((x) => x.moveId));
+    expect(a.blocks.every((x) => x.manual)).toBe(true);
+  });
+
+  it("手で選んだ指定を空にすると、また引き直しが効く", () => {
+    const cleared = settings({ overrides: [] });
+    const a = generateChoreography(32, { ...cleared, seed: 1 });
+    const b = generateChoreography(32, { ...cleared, seed: 999 });
+    expect(a.blocks.every((x) => !x.manual)).toBe(true);
+    expect(b.blocks.map((x) => x.moveId)).not.toEqual(a.blocks.map((x) => x.moveId));
+  });
+
+  it("手で選んだ小節は系統の絞り込みを無視する", () => {
+    // 指揮だけを選んでいても、手で選んだダンスの振りはそのまま残る。
+    // ユーザーからは「指揮だけにしたのにダンスが出る」に見えるので、
+    // UI 側で「系統の外の振り」として数を出している
+    const choreo = generateChoreography(
+      32,
+      settings({ styles: ["conduct"], overrides: [{ moveId: "armSwing", mirrored: false }] }),
+    );
+    expect(choreo.blocks[0].moveId).toBe("armSwing");
+    expect(getMove(choreo.blocks[0].moveId)?.mood).toBe("cute");
+  });
+
   it("キメが1種類に偏らない", () => {
     // 動きの大きさで絞ると、一番大きいキメだけが毎回出てくる
     const used = new Set<string>();
