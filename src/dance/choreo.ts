@@ -74,6 +74,16 @@ export interface DanceSettings {
    */
   snap: number;
   /**
+   * 追従（二次運動）0..1。
+   *
+   * 振り終わりに手先が目標を越えて戻り、振り始めにわずかに引く。量は
+   * 「実際にどれだけ急に止まったか」で決まるので、`snap` の行き過ぎが
+   * 全関節に同じ形で掛かるのとは別物。重さのあるものの止まり方になる。
+   * 上げるほど手先の最高速度が上がる（0 で 10.6、1 で 16.4 身長/秒）ので、
+   * 映像変換が追随できなければここを下げる。
+   */
+  follow: number;
+  /**
    * ブロックごとの手動指定。長さはブロック数と一致しなくてよく、
    * 範囲外や未指定（null）のブロックは自動生成に任せる。
    */
@@ -92,6 +102,7 @@ export const DEFAULT_DANCE: DanceSettings = {
   groove: 0.7,
   chain: 0.6,
   snap: 0.75,
+  follow: 0.35,
   overrides: [],
 };
 
@@ -366,6 +377,7 @@ export function normalizeDance(raw: unknown): DanceSettings {
     groove: num(o.groove, 0, 1, DEFAULT_DANCE.groove),
     chain: num(o.chain, 0, 1, DEFAULT_DANCE.chain),
     snap: num(o.snap, 0, 1, DEFAULT_DANCE.snap),
+    follow: num(o.follow, 0, 1, DEFAULT_DANCE.follow),
     overrides,
   };
 }

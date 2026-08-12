@@ -103,9 +103,10 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
       groove: dance.groove,
       chain: dance.chain,
       snap: dance.snap,
+      follow: dance.follow,
       body: project.body,
     }),
-    [dance.bounce, dance.groove, dance.chain, dance.snap, project.body],
+    [dance.bounce, dance.groove, dance.chain, dance.snap, dance.follow, project.body],
   );
 
   /** rAF から最新の値を読むための箱。再描画のたびにループを張り直さないため。 */
@@ -209,6 +210,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         groove: dance.groove,
         chain: dance.chain,
         snap: dance.snap,
+        follow: dance.follow,
         body: project.body,
         secondsPerBeat: beatSeconds,
         totalBeats: loopBeats * project.repeats,
@@ -245,6 +247,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     dance.groove,
     dance.chain,
     dance.snap,
+    dance.follow,
     dance.seed,
     loopBeats,
     project.repeats,
@@ -343,6 +346,18 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
                 />
               </div>
               <div className="field">
+                <label htmlFor="dance-follow">追従（振り終わりの余韻）</label>
+                <input
+                  id="dance-follow"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={dance.follow}
+                  onChange={(e) => patch({ follow: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field">
                 <label htmlFor="dance-chain">体の連鎖</label>
                 <input
                   id="dance-chain"
@@ -418,6 +433,10 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
               「ダイナミクス」がキレを決めます。上げるほど速く動いて止まり、
               行き過ぎてから戻り、振り幅と上下動も大きくなります。0 にすると
               終始等速で動き続ける体操になります。
+              「追従」は振り終わりの余韻です。手先が止まる位置を少し行き過ぎてから
+              戻り、振り始めにはわずかに引きます。急に止まるほど大きく出るので、
+              重さのあるものの止まり方になります。上げるほど手先が速くなるので、
+              映像変換が追いつかないときはここを下げてください。
               「体の連鎖」は腰から手先へ動きが伝わる遅れの量です。0 だと全身が同時に
               動いて人形のように見えます。
             </p>

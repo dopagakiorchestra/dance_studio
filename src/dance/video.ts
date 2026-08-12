@@ -87,6 +87,8 @@ export interface RecordDanceOptions {
   chain?: number;
   /** ダイナミクス 0..1。 */
   snap?: number;
+  /** 追従（二次運動）0..1。 */
+  follow?: number;
   /** 体型。骨格のサンプリングと描画で必ず同じものを使う。 */
   body?: Body;
   /** 1拍の秒数。 */
@@ -208,6 +210,7 @@ export async function recordDance(opts: RecordDanceOptions): Promise<RecordDance
         groove: opts.groove,
         chain: opts.chain,
         snap: opts.snap,
+        follow: opts.follow,
         body: opts.body,
       });
       drawFrame(ctx, skeleton, opts.stage, opts.draw);

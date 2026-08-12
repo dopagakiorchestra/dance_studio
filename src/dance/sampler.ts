@@ -281,6 +281,31 @@ const CHAIN_TIERS: Array<{ steps: number; joints: JointName[] }> = [
 const CHAIN_STEP = 0.05;
 
 /**
+ * 追従（二次運動）を掛ける関節。先端ほど強い。
+ *
+ * 脚と腰には掛けない。接地の解決が足の位置を決めているところへ後から角度を
+ * 足すと、せっかく床に置いた足がまた浮く。`AMPLIFY` と同じ線引き。
+ */
+const FOLLOW_TIERS: Array<{ gain: number; joints: JointName[] }> = [
+  { gain: 0.4, joints: ["chest", "upperArmL", "upperArmR"] },
+  { gain: 0.7, joints: ["neck", "head", "headTop", "forearmL", "forearmR"] },
+  { gain: 1, joints: ["handL", "knuckleL", "handTipL", "handR", "knuckleR", "handTipR"] },
+];
+
+/**
+ * 加速度を測る幅（カウント）。
+ *
+ * 広げるほど、ゆっくりした動きの追従まで拾って全体が重くなる。狭めると
+ * 鋭い止まりにだけ反応する。1拍の 1/8 に置いてある。
+ */
+const FOLLOW_STEP = 0.12;
+
+/** 追従の最大の強さ（`follow` が 1 のとき）。 */
+const FOLLOW_MAX = 0.55;
+
+const ZERO_ROT: Rot = [0, 0, 0];
+
+/**
  * 肘がロックアウトしない量（度）。
  *
  * 人は腕を上げるとき、肘を完全に伸ばし切らない。伸び切った腕は「棒」に
@@ -437,6 +462,8 @@ export interface SampleOptions {
   body?: Body;
   /** ノリの向き 0..1。0 が縦（沈み込み）、1 が横（重心の左右移動）。 */
   groove?: number;
+  /** 追従（二次運動）の強さ 0..1。省略時は追従なし。 */
+  follow?: number;
   /**
    * 足を床に置く処理を通すか。既定は通す。
    * 切れるようにしてあるのは、直る前と後を比べて測るため。
@@ -525,6 +552,59 @@ function chainedPose(
   return { root: base.root, j };
 }
 
+/**
+ * 二次運動（追従）。速く動いて止まったとき、手先が行き過ぎて戻る。
+ *
+ * ばねの過渡応答をそのまま積分すると、ポーズが「それまでの履歴」に依存して
+ * しまい、時刻だけの関数でなくなる（画角の走査も書き出しもランダムアクセス
+ * できなくなる）。そこで、減衰の弱いばねの低周波展開
+ *
+ *   y ≒ x - 2ζ/ωn・ẋ + (4ζ² - 1)/ωn²・ẍ
+ *
+ * を使う。第2項の遅れは既に `chain` が担っているので、ここでは第3項だけを
+ * 足す。ζ < 0.5 では係数が負なので、**加速度を引く**ことになる。
+ *
+ * これで何が起きるか。振りに入るとき（加速中）は手先がわずかに遅れ、
+ * 振り終わり（減速中）は目標を越えて戻る。`snap` の行き過ぎが全関節に同じ
+ * 形で掛かる決め打ちなのに対して、こちらは**実際にどれだけ急に止まったか**
+ * で量が決まる。重さがあるものの止まり方に見えるのはこちら。
+ *
+ * 代償として手先の最高速度が上がる。映像変換がフレーム間で追随できるかは
+ * 未検証なので、既定は控えめにしてある（`DEFAULT_DANCE.follow`）。
+ */
+function followThrough(
+  choreo: Choreography,
+  pos: number,
+  total: number,
+  chain: number,
+  snap: number,
+  amount: number,
+): Pose {
+  const cur = chainedPose(choreo, pos, total, chain, snap);
+  if (amount <= 0) return cur;
+
+  const back = chainedPose(choreo, wrap(pos - FOLLOW_STEP, total), total, chain, snap);
+  const fwd = chainedPose(choreo, wrap(pos + FOLLOW_STEP, total), total, chain, snap);
+
+  const j: Partial<Record<JointName, Rot>> = { ...cur.j };
+  for (const tier of FOLLOW_TIERS) {
+    const k = amount * tier.gain * FOLLOW_MAX;
+    for (const name of tier.joints) {
+      const c = cur.j?.[name] ?? ZERO_ROT;
+      const b = back.j?.[name] ?? ZERO_ROT;
+      const f = fwd.j?.[name] ?? ZERO_ROT;
+      const out: Rot = [
+        c[0] - k * (f[0] - 2 * c[0] + b[0]),
+        c[1] - k * (f[1] - 2 * c[1] + b[1]),
+        c[2] - k * (f[2] - 2 * c[2] + b[2]),
+      ];
+      // 指定の無かった関節に、丸め誤差だけの回転を生やさない
+      if (cur.j?.[name] || Math.hypot(out[0], out[1], out[2]) > 0.01) j[name] = out;
+    }
+  }
+  return { root: cur.root, j };
+}
+
 export function samplePose(
   choreo: Choreography,
   countPos: number,
@@ -535,9 +615,8 @@ export function samplePose(
   const total = choreo.totalCounts;
   const pos = wrap(countPos, total);
   const snap = opts.snap ?? 0;
-  const pose = relaxHands(
-    softenElbows(amplify(chainedPose(choreo, pos, total, opts.chain ?? 0, snap), snap)),
-  );
+  const swung = followThrough(choreo, pos, total, opts.chain ?? 0, snap, opts.follow ?? 0);
+  const pose = relaxHands(softenElbows(amplify(swung, snap)));
 
   return applyGroove(pose, pos, opts.bounce, snap, opts.groove ?? 0);
 }

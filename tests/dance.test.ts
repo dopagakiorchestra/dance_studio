@@ -839,6 +839,94 @@ describe("体型", () => {
   });
 });
 
+describe("追従（二次運動）", () => {
+  const choreo = generateChoreography(32, DEFAULT_DANCE);
+  const at = (count: number, follow: number): number =>
+    samplePose(choreo, count, { bounce: 0, chain: 0, snap: 0.75, follow }).j?.upperArmL?.[2] ?? 0;
+
+  it("振り終わりに行き過ぎてから、元の値へ戻る", () => {
+    // 28.0 付近で腕が振られて 28.4 あたりで止まる振り。追従を入れると、
+    // 到達したところを少し越えてから同じ値に落ち着く
+    const peakOff = Math.max(at(28.36, 0), at(28.42, 0));
+    const peakOn = Math.max(at(28.36, 1), at(28.42, 1));
+    const overshoot = peakOn - peakOff;
+    expect(overshoot).toBeGreaterThan(0.1);
+    // そのあと収まる。行き過ぎたままだと、ただ振り幅が増えただけになる
+    const settled = Math.abs(at(28.6, 1) - at(28.6, 0));
+    expect(settled).toBeLessThan(overshoot);
+  });
+
+  it("振り始めの前にわずかに引く（アンティシペーション）", () => {
+    // 動き出す直前は、進む向きと逆へ少し戻る
+    expect(at(28.0, 1)).toBeLessThan(at(28.0, 0));
+  });
+
+  it("止まっている間は何も足さない", () => {
+    // 加速度が 0 のところで値が動くと、静止しているはずのポーズが揺れる
+    for (const count of [27.5, 27.7, 27.8]) {
+      expect(Math.abs(at(count, 1) - at(count, 0))).toBeLessThan(0.01);
+    }
+  });
+
+  it("骨の長さは変わらない", () => {
+    const rest = boneLengths({});
+    for (const count of [1.1, 9.7, 24.4, 28.1]) {
+      const lengths = boneLengths(
+        samplePose(choreo, count, { bounce: 0.6, chain: 0.6, snap: 1, follow: 1 }),
+      );
+      for (const [name, value] of lengths) {
+        expect(value).toBeCloseTo(rest.get(name)!, 6);
+      }
+    }
+  });
+
+  it("脚と腰には掛けない", () => {
+    // 接地の解決が足の位置を決めたあとに角度を足すと、足がまた床から浮く
+    for (const count of [3.3, 12.7, 24.1, 28.1]) {
+      const off = samplePose(choreo, count, { bounce: 0.6, chain: 0.6, snap: 0.75, follow: 0 });
+      const on = samplePose(choreo, count, { bounce: 0.6, chain: 0.6, snap: 0.75, follow: 1 });
+      for (const name of [
+        "hips",
+        "thighL",
+        "shinL",
+        "footL",
+        "thighR",
+        "shinR",
+        "footR",
+      ] as JointName[]) {
+        expect(on.j?.[name] ?? [0, 0, 0]).toEqual(off.j?.[name] ?? [0, 0, 0]);
+      }
+    }
+  });
+
+  it("上げるほど手先が速くなる（変換のリスクとして把握しておく）", () => {
+    const peak = (follow: number): number => {
+      const step = 0.01;
+      let worst = 0;
+      let prev = sampleSkeleton(choreo, -step, { bounce: 0.6, chain: 0.6, snap: 0.75, follow }).pos;
+      for (let count = 0; count <= choreo.totalCounts; count += step) {
+        const cur = sampleSkeleton(choreo, count, { bounce: 0.6, chain: 0.6, snap: 0.75, follow })
+          .pos;
+        for (const name of ["handTipL", "handTipR"] as JointName[]) {
+          worst = Math.max(
+            worst,
+            Math.hypot(
+              cur[name].x - prev[name].x,
+              cur[name].y - prev[name].y,
+              cur[name].z - prev[name].z,
+            ),
+          );
+        }
+        prev = cur;
+      }
+      return worst;
+    };
+    // 既定（0.35）で 2 割ほど。1 まで上げると 5 割増える
+    expect(peak(1)).toBeGreaterThan(peak(0) * 1.3);
+    expect(peak(DEFAULT_DANCE.follow)).toBeLessThan(peak(0) * 1.3);
+  });
+});
+
 describe("接地", () => {
   const choreo = generateChoreography(32, DEFAULT_DANCE);
   const opts = (over: Partial<SampleOptions> = {}): SampleOptions => ({
