@@ -224,24 +224,90 @@ const L = {
  */
 const PODIUM_TURN = 22;
 
+/** 太もも・すねのおおよその長さ。しゃがみの膝角度を出すのに使う。 */
+const LEG_SEGMENT = 0.44;
+
+/**
+ * 腰を `drop` だけ下げるのに要る膝の角度（度）。
+ *
+ * 太もも -α・膝 +2α で足首がほぼ真下に留まる（sampler の上下動と同じ式）。
+ * **下げるだけで膝を曲げないと、接地の解決が体ごと持ち上げ直してしゃがみが
+ * 消える**（両足が床にめり込むので `ground.ts` が腰を上げてしまう）。
+ */
+function kneeForDrop(drop: number): number {
+  const cos = Math.min(1, Math.max(-1, 1 - drop / (2 * LEG_SEGMENT)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+/**
+ * つま先立ちで `height` だけ伸び上がるのに要る足首の角度（度）。
+ *
+ * つま先は足首から (0, -0.042, 0.17) の位置。足首を +X に回すとつま先が
+ * 下がるので、そのぶん腰を上げても接地が保てる。上げるだけだと足が床から
+ * 離れ、接地の解決の帯（`PLANT_BAND`）を超えて宙に浮く。
+ */
+function ankleForRise(height: number): number {
+  let lo = 0;
+  let hi = 45;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    const r = (mid * Math.PI) / 180;
+    if (0.17 * Math.sin(r) - 0.042 * (1 - Math.cos(r)) < height) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 /**
  * 指揮台の上の構え。
  *
- * 足はほとんど動かさない。指揮者の下半身は踊らないので、ここを動かすと
- * 途端に「指揮者っぽさ」が消える。`lean` は前傾（度）、`turn` は上体の振り向き。
+ * `lean` は前傾（度）、`turn` は上体の振り向き（腰ではなく背骨と胸で回す。
+ * 腰を回すと脚ごと向きが変わる）、`drop` は腰の沈み、`lift` はつま先立ちで
+ * 伸び上がる高さ。
+ *
+ * 沈むと上体がわずかに前へ出る。バランスを取るのに人が実際そうするからで、
+ * これが無いと後ろへ倒れそうに見える。
  */
-function podium(lean = 0, turn = 0): Pose {
+function podium(lean = 0, turn = 0, drop = 0, lift = 0): Pose {
+  const knee = kneeForDrop(Math.max(0, drop));
+  const ankle = lift > 0 ? ankleForRise(lift) : 0;
+  const balance = lean + knee * 0.35;
   return {
-    root: { y: HIP_HEIGHT },
+    root: { y: HIP_HEIGHT - drop + lift },
     j: {
       hips: [0, PODIUM_TURN, 0],
-      thighL: [0, 0, 5],
-      thighR: [0, 0, -5],
-      shinL: [5, 0, 0],
-      shinR: [5, 0, 0],
-      spine: [-lean * 0.55, turn * 0.3, 0],
-      chest: [-lean * 0.45, turn * 0.7, 0],
+      thighL: [-knee, 0, 5],
+      thighR: [-knee, 0, -5],
+      shinL: [5 + 2 * knee, 0, 0],
+      shinR: [5 + 2 * knee, 0, 0],
+      footL: [ankle, 0, 0],
+      footR: [ankle, 0, 0],
+      spine: [-balance * 0.55, turn * 0.3, 0],
+      chest: [-balance * 0.45, turn * 0.7, 0],
     },
+  };
+}
+
+/**
+ * 片足を踏み込む。dir=+1 でキャラの左（画面右）へ。
+ *
+ * 足の接地は `ground.ts` が解くので、ここでは踏み出す角度だけ書けばよい。
+ */
+function lunge(dir: number, depth = 0.1): Pose {
+  const knee = kneeForDrop(depth);
+  const front = dir > 0 ? "L" : "R";
+  const back = dir > 0 ? "R" : "L";
+  return {
+    root: { x: 0.05 * dir, y: HIP_HEIGHT - depth },
+    j: {
+      hips: [0, PODIUM_TURN, -4 * dir],
+      [`thigh${front}`]: [-knee - 14, 0, 12 * dir],
+      [`shin${front}`]: [2 * knee + 16, 0, 0],
+      [`thigh${back}`]: [-knee + 16, 0, 4 * dir],
+      [`shin${back}`]: [2 * knee + 4, 0, 0],
+      spine: [-(knee * 0.35) * 0.55, 0, 2 * dir],
+      chest: [-(knee * 0.35) * 0.45, 0, 2 * dir],
+    } as Joints,
   };
 }
 
@@ -1101,6 +1167,325 @@ export const MOVES: Move[] = [
       kf(2, merge(podium(42), baton(R.side, L.side), gaze(0, 14))),
       kf(3, merge(podium(42), baton(R.side, L.side), gaze(0, 14)), "hold"),
       kf(4, merge(podium(42), baton(R.side, L.side), gaze(0, 14)), "hold"),
+    ],
+  },
+  // --- 指揮（膝と高低差を使うもの） ---
+  //
+  // 前の20個は下半身を固定してある。実際の指揮者は膝でタメを作り、沈んでから
+  // 出し、伸び上がって膨らませる。上体だけ動かしていると、どれだけ腕を振っても
+  // 「腕の運動」にしか見えない。
+  //
+  // 沈むときは必ず膝を曲げること。腰を下げるだけだと両足が床にめり込み、
+  // 接地の解決（ground.ts）が体ごと持ち上げ直して、しゃがみがそのまま消える。
+  // `podium(lean, turn, drop, lift)` がその計算を持っている。
+  {
+    id: "sinkCue",
+    name: "沈んで出す",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.02), baton(R.ready, L.ready), gaze(0, -2))),
+      kf(1, merge(podium(0, 0, 0.15), baton(R.ready, L.chest), gaze(0, 4))),
+      kf(2, merge(podium(3, 0, 0.02), baton(R.heavy, L.down), gaze(0, 10))),
+      kf(3, merge(podium(0, -6, 0.07), baton(R.out, L.ready), gaze(-6, 2))),
+      kf(4, merge(podium(0, 0, 0.02), baton(R.ready, L.ready), gaze(0, -2))),
+    ],
+  },
+  {
+    id: "riseSwell",
+    name: "立ち上がって膨らませる",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    // クレッシェンドを腕だけでなく体の高さでやる。1小節かけて起き上がる
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.16), baton(R.low, L.down), gaze(0, 8)), "inout"),
+      kf(1, merge(podium(0, 0, 0.11), baton(R.tickDown, L.palm), gaze(0, 4)), "inout"),
+      kf(2, merge(podium(0, -4, 0.05), baton(R.out, L.palm), gaze(-4, 0)), "inout"),
+      kf(3, merge(podium(0, 0, 0), baton(R.up, L.open), gaze(0, -8)), "inout"),
+      kf(4, merge(podium(0, 0, 0, 0.06), baton(R.high, L.open), gaze(0, -14)), "inout"),
+    ],
+  },
+  {
+    id: "deepDown",
+    name: "深く沈める",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0), baton(R.ready, L.ready), gaze(0, -2)), "inout"),
+      kf(1, merge(podium(0, 0, 0.09), baton(R.tickDown, L.palm), gaze(0, 4)), "inout"),
+      kf(2, merge(podium(0, 0, 0.16), baton(R.low, L.down), gaze(0, 10)), "inout"),
+      kf(3, merge(podium(0, 0, 0.2), baton(R.low, L.down), gaze(0, 14)), "inout"),
+      kf(4, merge(podium(0, 0, 0.2), baton(R.low, L.down), gaze(0, 14)), "hold"),
+    ],
+  },
+  {
+    id: "springUp",
+    name: "沈んで跳ね上げる",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    // 溜めてから一気に伸び上がる。跳ねる前に止まっているから跳ねて見える
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.15), baton(R.low, L.down), gaze(0, 10))),
+      kf(1, merge(podium(0, 0, 0.15), baton(R.low, L.down), gaze(0, 10)), "hold"),
+      kf(2, merge(podium(0, 0, 0, 0.08), baton(R.high, L.open), gaze(0, -16))),
+      kf(3, merge(podium(0, 0, 0.03), baton(R.ready, L.ready), gaze(0, -2))),
+      kf(4, merge(podium(0, 0, 0.15), baton(R.low, L.down), gaze(0, 10))),
+    ],
+  },
+  {
+    id: "lungeStep",
+    name: "踏み込んで合図",
+    counts: 4,
+    energy: 2,
+    mirrorable: true,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.03), baton(R.ready, L.ready), gaze(0))),
+      kf(1, merge(lunge(1, 0.12), baton(R.tickUp, L.point), gaze(26, -2))),
+      kf(2, merge(lunge(1, 0.13), baton(R.tickDown, L.point), gaze(26, 2))),
+      kf(3, merge(podium(0, 8, 0.05), baton(R.ready, L.palm), gaze(12))),
+      kf(4, merge(podium(0, 0, 0.03), baton(R.ready, L.ready), gaze(0))),
+    ],
+  },
+  {
+    id: "kneelDraw",
+    name: "膝を落として引き出す",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.06), baton(R.ready, L.palm), gaze(4, 2)), "inout"),
+      kf(1, merge(podium(0, 6, 0.16), baton(R.tickDown, L.palm), gaze(14, 8)), "inout"),
+      kf(2, merge(podium(0, 10, 0.19), baton(R.low, L.wide), gaze(20, 10)), "inout"),
+      kf(3, merge(podium(0, 4, 0.11), baton(R.ready, L.palm), gaze(10, 4)), "inout"),
+      kf(4, merge(podium(0, 0, 0.06), baton(R.ready, L.palm), gaze(4, 2)), "inout"),
+    ],
+  },
+  {
+    id: "lowSustain",
+    name: "低く保つ",
+    counts: 4,
+    energy: 0,
+    mirrorable: false,
+    mood: "conduct",
+    // 沈んだまま小さく刻む。高さを変えないことがそのまま「保つ」になる
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.15), baton(R.tickUp, L.down), gaze(0, 8))),
+      kf(1, merge(podium(0, 0, 0.15), baton(R.tickDown, L.down), gaze(0, 10))),
+      kf(2, merge(podium(0, 0, 0.16), baton(R.tickUp, L.down), gaze(0, 8))),
+      kf(3, merge(podium(0, 0, 0.16), baton(R.tickDown, L.down), gaze(0, 10))),
+      kf(4, merge(podium(0, 0, 0.15), baton(R.tickUp, L.down), gaze(0, 8))),
+    ],
+  },
+  {
+    id: "stairUp",
+    name: "段で上げる",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    // 連続で上げず、拍ごとに段を作る。テラス型のクレッシェンド
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.18), baton(R.low, L.down), gaze(0, 12))),
+      kf(1, merge(podium(0, 0, 0.12), baton(R.tickDown, L.palm), gaze(0, 6))),
+      kf(2, merge(podium(0, 0, 0.06), baton(R.ready, L.palm), gaze(0, 0))),
+      kf(3, merge(podium(0, 0, 0), baton(R.up, L.open), gaze(0, -8))),
+      kf(4, merge(podium(0, 0, 0, 0.07), baton(R.high, L.open), gaze(0, -15))),
+    ],
+  },
+  {
+    id: "stairDown",
+    name: "段で下げる",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0, 0.07), baton(R.high, L.open), gaze(0, -15))),
+      kf(1, merge(podium(0, 0, 0), baton(R.out, L.palm), gaze(0, -6))),
+      kf(2, merge(podium(0, 0, 0.07), baton(R.ready, L.palm), gaze(0, 2))),
+      kf(3, merge(podium(0, 0, 0.13), baton(R.tickDown, L.down), gaze(0, 8))),
+      kf(4, merge(podium(0, 0, 0.18), baton(R.low, L.down), gaze(0, 12))),
+    ],
+  },
+  {
+    id: "kneeBeat",
+    name: "膝で拍を取る",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    // 4拍子の図形を振りながら、膝で拍を刻む。腕と脚が同じ拍で沈む
+    keyframes: [
+      kf(0, merge(podium(0, 4, 0.1), baton(R.down, L.ready), gaze(0, 6))),
+      kf(1, merge(podium(0, 6, 0.03), baton(R.in, L.ready), gaze(6, 0))),
+      kf(2, merge(podium(0, -8, 0.1), baton(R.out, L.ready), gaze(-8, 6))),
+      kf(3, merge(podium(0, -4, 0.03), baton(R.up, L.ready), gaze(0, -6))),
+      kf(4, merge(podium(0, 4, 0.1), baton(R.down, L.ready), gaze(0, 6))),
+    ],
+  },
+  {
+    id: "crouchTurn",
+    name: "沈んで振り向く",
+    counts: 4,
+    energy: 2,
+    mirrorable: true,
+    mood: "conduct",
+    // 腰ではなく背骨と胸で振り向く。腰を回すと脚ごと向きが変わる
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.04), baton(R.ready, L.ready), gaze(0))),
+      kf(1, merge(podium(0, 20, 0.11), baton(R.tickUp, L.point), gaze(30, 4))),
+      kf(2, merge(podium(0, 26, 0.14), baton(R.tickDown, L.point), gaze(34, 8))),
+      kf(3, merge(podium(0, 10, 0.07), baton(R.ready, L.palm), gaze(14, 2))),
+      kf(4, merge(podium(0, 0, 0.04), baton(R.ready, L.ready), gaze(0))),
+    ],
+  },
+  {
+    id: "heelLift",
+    name: "伸び上がる",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.05), baton(R.ready, L.ready), gaze(0, 2)), "inout"),
+      kf(1, merge(podium(0, 0, 0), baton(R.tickUp, L.palm), gaze(0, -4)), "inout"),
+      kf(2, merge(podium(0, 0, 0, 0.05), baton(R.up, L.open), gaze(0, -12)), "inout"),
+      kf(3, merge(podium(0, 0, 0, 0.09), baton(R.high, L.open), gaze(0, -18)), "inout"),
+      kf(4, merge(podium(0, 0, 0, 0.09), baton(R.high, L.open), gaze(0, -18)), "hold"),
+    ],
+  },
+  {
+    id: "lowShift",
+    name: "低く重心を移す",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    // 沈んだまま左右へ踏み替える。腰だけ横へ動かすと足が滑るので踏み込みで作る
+    keyframes: [
+      kf(0, merge(lunge(1, 0.12), baton(R.out, L.palm), gaze(10, 4)), "inout"),
+      kf(1, merge(podium(0, 0, 0.14), baton(R.tickDown, L.down), gaze(0, 8)), "inout"),
+      kf(2, merge(lunge(-1, 0.12), baton(R.in, L.wide), gaze(-10, 4)), "inout"),
+      kf(3, merge(podium(0, 0, 0.14), baton(R.tickDown, L.down), gaze(0, 8)), "inout"),
+      kf(4, merge(lunge(1, 0.12), baton(R.out, L.palm), gaze(10, 4)), "inout"),
+    ],
+  },
+  {
+    id: "pushDownLow",
+    name: "沈めながら押さえる",
+    counts: 4,
+    energy: 0,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.02), baton(R.ready, L.palm), gaze(0, 0)), "inout"),
+      kf(1, merge(podium(0, 0, 0.08), baton(R.tickDown, L.down), gaze(0, 6)), "inout"),
+      kf(2, merge(podium(0, 0, 0.14), baton(R.low, L.down), gaze(0, 10)), "inout"),
+      kf(3, merge(podium(0, 0, 0.18), baton(R.low, L.down), gaze(0, 14)), "inout"),
+      kf(4, merge(podium(0, 0, 0.18), baton(R.low, L.down), gaze(0, 14)), "hold"),
+    ],
+  },
+  {
+    id: "lungeThrust",
+    name: "踏み込んで突き出す",
+    counts: 4,
+    energy: 2,
+    mirrorable: true,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.04), baton(R.ready, L.ready), gaze(0, -2))),
+      kf(1, merge(lunge(-1, 0.15), baton(R.heavy, L.close), gaze(-8, 14))),
+      kf(2, merge(lunge(-1, 0.15), baton(R.heavy, L.close), gaze(-8, 14)), "hold"),
+      kf(3, merge(podium(0, 0, 0.07), baton(R.ready, L.ready), gaze(0, 2))),
+      kf(4, merge(podium(0, 0, 0.04), baton(R.ready, L.ready), gaze(0, -2))),
+    ],
+  },
+  {
+    id: "crouchHold",
+    name: "低く構えて溜める",
+    counts: 4,
+    energy: 0,
+    mirrorable: false,
+    mood: "conduct",
+    // 入りの前の一瞬。動かないことが仕事
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.05), baton(R.ready, L.ready), gaze(0, 0))),
+      kf(1, merge(podium(0, 0, 0.16), baton(R.ready, L.chest), gaze(0, 8))),
+      kf(2, merge(podium(0, 0, 0.16), baton(R.ready, L.chest), gaze(0, 8)), "hold"),
+      kf(3, merge(podium(0, 0, 0.16), baton(R.ready, L.chest), gaze(0, 8)), "hold"),
+      kf(4, merge(podium(0, 0, 0.16), baton(R.ready, L.chest), gaze(0, 8)), "hold"),
+    ],
+  },
+  {
+    id: "liftWhole",
+    name: "体ごと持ち上げる",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.19), baton(R.low, L.down), gaze(0, 13))),
+      kf(1, merge(podium(0, 0, 0.12), baton(R.tickDown, L.palm), gaze(0, 6))),
+      kf(2, merge(podium(0, 0, 0.04), baton(R.out, L.wide), gaze(-4, -2))),
+      kf(3, merge(podium(0, 0, 0, 0.06), baton(R.high, L.open), gaze(0, -14))),
+      kf(4, merge(podium(0, 0, 0, 0.09), baton(R.high, L.open), gaze(0, -18))),
+    ],
+  },
+  {
+    id: "rockLow",
+    name: "低く揺れる",
+    counts: 4,
+    energy: 1,
+    mirrorable: false,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, -8, 0.12), baton(R.out, L.palm), gaze(-8, 4)), "inout"),
+      kf(1, merge(podium(0, 8, 0.15), baton(R.in, L.wide), gaze(8, 6)), "inout"),
+      kf(2, merge(podium(0, -8, 0.12), baton(R.out, L.open), gaze(-8, 2)), "inout"),
+      kf(3, merge(podium(0, 8, 0.15), baton(R.in, L.palm), gaze(8, 6)), "inout"),
+      kf(4, merge(podium(0, -8, 0.12), baton(R.out, L.palm), gaze(-8, 4)), "inout"),
+    ],
+  },
+  {
+    id: "poseLow",
+    name: "キメ（沈んで止める）",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    accent: true,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.02), baton(R.wide, L.wide), gaze(0, -6))),
+      kf(1, merge(podium(4, 0, 0.2), baton(R.close, L.close), gaze(0, 16))),
+      kf(2, merge(podium(4, 0, 0.2), baton(R.close, L.close), gaze(0, 16)), "hold"),
+      kf(3, merge(podium(4, 0, 0.2), baton(R.close, L.close), gaze(0, 16)), "hold"),
+      kf(4, merge(podium(4, 0, 0.2), baton(R.close, L.close), gaze(0, 16)), "hold"),
+    ],
+  },
+  {
+    id: "poseRise",
+    name: "キメ（伸び上がって止める）",
+    counts: 4,
+    energy: 2,
+    mirrorable: false,
+    accent: true,
+    mood: "conduct",
+    keyframes: [
+      kf(0, merge(podium(0, 0, 0.13), baton(R.ready, L.chest), gaze(0, 8))),
+      kf(1, merge(podium(0, 0, 0, 0.1), baton(R.high, L.open), gaze(0, -18))),
+      kf(2, merge(podium(0, 0, 0, 0.1), baton(R.high, L.open), gaze(0, -18)), "hold"),
+      kf(3, merge(podium(0, 0, 0, 0.1), baton(R.high, L.open), gaze(0, -18)), "hold"),
+      kf(4, merge(podium(0, 0, 0, 0.1), baton(R.high, L.open), gaze(0, -18)), "hold"),
     ],
   },
 ];

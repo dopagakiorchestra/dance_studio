@@ -844,8 +844,18 @@ describe("体型", () => {
 describe("指揮", () => {
   const conducts = MOVES.filter((m) => m.mood === "conduct");
 
-  it("20個ある", () => {
-    expect(conducts).toHaveLength(20);
+  it("40個ある", () => {
+    expect(conducts).toHaveLength(40);
+  });
+
+  it("膝を使う振りが20個ある", () => {
+    // 上体だけ動かしていると、どれだけ腕を振っても「腕の運動」にしか見えない。
+    // 上下に動くものだけでなく「低いまま保つ」も膝の仕事なので、
+    // 高さの変化量ではなく「直立の高さから離れるか」で数える
+    const knees = conducts.filter((m) =>
+      m.keyframes.some((f) => Math.abs((f.pose.root?.y ?? HIP_HEIGHT) - HIP_HEIGHT) > 0.03),
+    );
+    expect(knees).toHaveLength(20);
   });
 
   it("締めに使えるキメが複数ある", () => {
@@ -860,6 +870,52 @@ describe("指揮", () => {
     for (const move of conducts) {
       for (const frame of move.keyframes) {
         expect(Math.abs(frame.pose.j?.hips?.[1] ?? 0)).toBeGreaterThan(10);
+      }
+    }
+  });
+
+  it("しゃがみが接地の解決に打ち消されない", () => {
+    // 腰を下げるだけで膝を曲げないと両足が床にめり込み、ground.ts が体ごと
+    // 持ち上げ直してしゃがみがそのまま消える。`podium` の drop はそのための
+    // 膝の計算を持っている。書いた沈みの 8割が残っていれば効いている
+    const opts = { bounce: 0.35, chain: 0.6, snap: 0.75, groove: 0.3, follow: 0.35 };
+    const deep = ["deepDown", "riseSwell", "stairUp", "liftWhole", "sinkCue"];
+    for (const id of deep) {
+      const move = getMove(id)!;
+      const choreo = {
+        seed: 1,
+        totalCounts: move.counts,
+        blocks: [{ moveId: id, mirrored: false, startCount: 0, counts: move.counts, slot: 0 }],
+      };
+      const written = move.keyframes.map((f) => f.pose.root?.y ?? HIP_HEIGHT);
+      const wrote = Math.max(...written) - Math.min(...written);
+
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let count = 0; count < move.counts; count += 0.05) {
+        const y = sampleSkeleton(choreo, count, opts).pos.hips.y;
+        lo = Math.min(lo, y);
+        hi = Math.max(hi, y);
+      }
+      expect(hi - lo).toBeGreaterThan(wrote * 0.8);
+    }
+  });
+
+  it("しゃがんでも足が床から離れない", () => {
+    const opts = { bounce: 0.35, chain: 0.6, snap: 0.75, groove: 0.3, follow: 0.35 };
+    for (let seed = 1; seed <= 12; seed++) {
+      const choreo = generateChoreography(32, settings({ seed, styles: ["conduct"] }));
+      const r = jointRadiusOf(DEFAULT_BODY);
+      for (let count = 0; count < choreo.totalCounts; count += 0.1) {
+        const { pos } = sampleSkeleton(choreo, count, opts);
+        const sole = Math.min(
+          pos.footL.y - (r.footL ?? 0),
+          pos.toeL.y - (r.toeL ?? 0),
+          pos.footR.y - (r.footR ?? 0),
+          pos.toeR.y - (r.toeR ?? 0),
+        );
+        expect(sole).toBeGreaterThan(-0.01 * HIP_HEIGHT);
+        expect(sole).toBeLessThan(0.1 * HIP_HEIGHT);
       }
     }
   });
