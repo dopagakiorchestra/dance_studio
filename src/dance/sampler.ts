@@ -64,6 +64,12 @@ const BOUNCE_GAIN = 0.7;
 /** 太もも＋すねの長さ。しゃがみ角度の計算に使う。 */
 const LEG_SEGMENT = 0.44;
 
+/** 脚全体の長さ。横に振ったときの足の位置の打ち消しに使う。 */
+const LEG_TOTAL = 0.88;
+
+/** 横ノリの最大の重心移動（ワールド単位）。 */
+const MAX_SWAY = 0.05;
+
 /**
  * ダイナミクス最大のとき、キーフレーム間のどれだけを静止に回すか。
  *
@@ -168,26 +174,87 @@ function bounceDip(beatPhase: number): number {
   return 0.5 - 0.5 * Math.cos(Math.PI * ((beatPhase - rise) / DROP_SHARE));
 }
 
-function applyBounce(pose: Pose, beatPhase: number, amount: number, snap = 0): Pose {
-  if (amount <= 0) return pose;
-  // ダイナミクスを上げるほど深く沈む
-  const dip = MAX_DIP * (1 + BOUNCE_GAIN * snap) * amount * bounceDip(beatPhase);
-  if (dip <= 0.0005) return pose;
+/**
+ * 横ノリの、拍をまたぐ重心の移り。0（今の側）→ 1（反対側）。
+ *
+ * 拍の頭で乗り切っていて、しばらくそこに留まり、次の拍の直前で一気に
+ * 移る。等速で往復させると「揺れている」だけで、拍に乗って見えない。
+ * 両端とも cos の半波なので、拍をまたいでも速度が 0 で繋がる。
+ */
+function swingPhase(beatPhase: number): number {
+  const hold = 1 - DROP_SHARE;
+  // 留まっている間もわずかには流れる。完全に止めると人形に見える
+  const drift = 0.25;
+  if (beatPhase < hold) {
+    return drift * 0.5 * (1 - Math.cos(Math.PI * (beatPhase / hold)));
+  }
+  const t = (beatPhase - hold) / DROP_SHARE;
+  return drift + (1 - drift) * 0.5 * (1 - Math.cos(Math.PI * t));
+}
 
-  const cos = Math.min(1, Math.max(-1, 1 - dip / (2 * LEG_SEGMENT)));
-  const alpha = (Math.acos(cos) * 180) / Math.PI;
+/** 横ノリの重心位置 -1..1。拍ごとに左右が入れ替わる（周期は2拍）。 */
+function swayAt(pos: number): number {
+  const beat = Math.floor(pos);
+  const phase = pos - beat;
+  const side = beat % 2 === 0 ? 1 : -1;
+  return side * (1 - 2 * swingPhase(phase));
+}
+
+/**
+ * 拍に乗った体重の移動を足す。
+ *
+ * 縦（沈み込み）と横（重心の左右移動）を groove で混ぜる。
+ * 縦だけだとスクワットのように見えることがあり、実際のダンスでは
+ * 横に乗るほうが多い。どちらが合うかは曲によるので選べるようにしてある。
+ */
+function applyGroove(
+  pose: Pose,
+  pos: number,
+  amount: number,
+  snap: number,
+  groove: number,
+): Pose {
+  if (amount <= 0) return pose;
+  const gain = 1 + BOUNCE_GAIN * snap;
+  const beatPhase = pos - Math.floor(pos);
+
+  const dip = MAX_DIP * gain * amount * (1 - groove) * bounceDip(beatPhase);
+  const shift = MAX_SWAY * gain * amount * groove * swayAt(pos);
+  if (dip <= 0.0005 && Math.abs(shift) <= 0.0005) return pose;
 
   const j: Partial<Record<JointName, Rot>> = { ...pose.j };
-  addRot(j, "thighL", -alpha);
-  addRot(j, "thighR", -alpha);
-  addRot(j, "shinL", 2 * alpha);
-  addRot(j, "shinR", 2 * alpha);
-  // 沈むときに上体がわずかに前へ出ると、重さが乗って見える
-  addRot(j, "spine", -alpha * 0.22);
-  addRot(j, "head", alpha * 0.12);
+
+  if (dip > 0.0005) {
+    const cos = Math.min(1, Math.max(-1, 1 - dip / (2 * LEG_SEGMENT)));
+    const alpha = (Math.acos(cos) * 180) / Math.PI;
+    addRot(j, "thighL", -alpha);
+    addRot(j, "thighR", -alpha);
+    addRot(j, "shinL", 2 * alpha);
+    addRot(j, "shinR", 2 * alpha);
+    // 沈むときに上体がわずかに前へ出ると、重さが乗って見える
+    addRot(j, "spine", -alpha * 0.22);
+    addRot(j, "head", alpha * 0.12);
+  }
+
+  if (Math.abs(shift) > 0.0005) {
+    // 腰を横へ運ぶと足が地面から離れるので、太ももを逆に倒して打ち消す。
+    // weight() が振り付け側でやっているのと同じ補正
+    const comp = (Math.atan2(shift, LEG_TOTAL) * 180) / Math.PI;
+    addRot(j, "thighL", 0, -comp);
+    addRot(j, "thighR", 0, -comp);
+    // 腰が出た側と逆へ上体を返すと、重心が乗って見える
+    const lean = (shift / MAX_SWAY) * 4;
+    addRot(j, "hips", 0, -lean * 0.8);
+    addRot(j, "spine", 0, lean * 0.9);
+    addRot(j, "chest", 0, lean * 0.7);
+    addRot(j, "head", 0, -lean * 0.5);
+  }
 
   const root = pose.root ?? {};
-  return { root: { ...root, y: (root.y ?? HIP_HEIGHT) - dip }, j };
+  return {
+    root: { ...root, x: (root.x ?? 0) + shift, y: (root.y ?? HIP_HEIGHT) - dip },
+    j,
+  };
 }
 
 /**
@@ -312,6 +379,8 @@ export interface SampleOptions {
   snap?: number;
   /** 体型。省略時は標準。 */
   body?: Body;
+  /** ノリの向き 0..1。0 が縦（沈み込み）、1 が横（重心の左右移動）。 */
+  groove?: number;
 }
 
 /**
@@ -407,7 +476,7 @@ export function samplePose(
   const snap = opts.snap ?? 0;
   const pose = softenElbows(amplify(chainedPose(choreo, pos, total, opts.chain ?? 0, snap), snap));
 
-  return applyBounce(pose, pos - Math.floor(pos), opts.bounce, snap);
+  return applyGroove(pose, pos, opts.bounce, snap, opts.groove ?? 0);
 }
 
 /** ポーズを解いてワールド座標まで求める。描画側の入口。 */

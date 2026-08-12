@@ -49,8 +49,15 @@ export interface DanceSettings {
   seed: number;
   /** 動きの大きさ 0..1。 */
   intensity: number;
-  /** ビートに乗った上下動の強さ 0..1。 */
+  /** 拍に乗った体重移動の強さ 0..1。 */
   bounce: number;
+  /**
+   * ノリの向き 0..1。0 が縦（沈み込み）、1 が横（重心の左右移動）。
+   *
+   * 縦だけだとスクワットのように見えることがある。横に乗るほうが
+   * ダンスとしては自然な場面が多いので、既定は横寄りにしてある。
+   */
+  groove: number;
   /**
    * 体の連鎖の強さ 0..1。
    *
@@ -82,6 +89,7 @@ export const DEFAULT_DANCE: DanceSettings = {
   seed: 1,
   intensity: 0.7,
   bounce: 0.6,
+  groove: 0.7,
   chain: 0.6,
   snap: 0.75,
   overrides: [],
@@ -355,6 +363,7 @@ export function normalizeDance(raw: unknown): DanceSettings {
     seed: Math.round(num(o.seed, 1, 999999, DEFAULT_DANCE.seed)),
     intensity: num(o.intensity, 0, 1, DEFAULT_DANCE.intensity),
     bounce: num(o.bounce, 0, 1, DEFAULT_DANCE.bounce),
+    groove: num(o.groove, 0, 1, DEFAULT_DANCE.groove),
     chain: num(o.chain, 0, 1, DEFAULT_DANCE.chain),
     snap: num(o.snap, 0, 1, DEFAULT_DANCE.snap),
     overrides,

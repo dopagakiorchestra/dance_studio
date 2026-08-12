@@ -97,8 +97,14 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
 
   /** 描画に使うサンプリング設定。プレビューと書き出しで必ず同じものを使う。 */
   const sampleOpts = useMemo(
-    () => ({ bounce: dance.bounce, chain: dance.chain, snap: dance.snap, body: project.body }),
-    [dance.bounce, dance.chain, dance.snap, project.body],
+    () => ({
+      bounce: dance.bounce,
+      groove: dance.groove,
+      chain: dance.chain,
+      snap: dance.snap,
+      body: project.body,
+    }),
+    [dance.bounce, dance.groove, dance.chain, dance.snap, project.body],
   );
 
   /** rAF から最新の値を読むための箱。再描画のたびにループを張り直さないため。 */
@@ -196,6 +202,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
         stage,
         draw: { palette, body: project.body },
         bounce: dance.bounce,
+        groove: dance.groove,
         chain: dance.chain,
         snap: dance.snap,
         body: project.body,
@@ -231,6 +238,7 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
     choreo,
     sampleOpts,
     dance.bounce,
+    dance.groove,
     dance.chain,
     dance.snap,
     dance.seed,
@@ -306,6 +314,18 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
                 />
               </div>
               <div className="field">
+                <label htmlFor="dance-groove">ノリの向き（縦↔横）</label>
+                <input
+                  id="dance-groove"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={dance.groove}
+                  onChange={(e) => patch({ groove: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field">
                 <label htmlFor="dance-snap">ダイナミクス</label>
                 <input
                   id="dance-snap"
@@ -374,8 +394,10 @@ export function DanceStudio({ project, onChange, onBodyChange, playPosition }: D
 
             <p className="hint">
               「動きの大きさ」を上げると、大ぶりな振りが選ばれやすくなります。
-              「ビートの乗り」は拍に合わせた上下動の深さです。0 にすると踊っているように
+              「ビートの乗り」は拍への乗りの深さです。0 にすると踊っているように
               見えなくなるので、少しは残しておくのがおすすめです。
+              「ノリの向き」は左に振ると縦（沈み込み）、右に振ると横（重心の左右移動）。
+              縦だけだとスクワットに見えることがあります。
               「ダイナミクス」がキレを決めます。上げるほど速く動いて止まり、
               行き過ぎてから戻り、振り幅と上下動も大きくなります。0 にすると
               終始等速で動き続ける体操になります。

@@ -70,12 +70,12 @@ const JOINTS: JointDef[] = [
   { name: "upperArmL", parent: "chest", offset: { x: 0.19, y: 0.13, z: 0 } },
   { name: "forearmL", parent: "upperArmL", offset: { x: 0, y: -0.28, z: 0 } },
   { name: "handL", parent: "forearmL", offset: { x: 0, y: -0.26, z: 0 } },
-  { name: "handTipL", parent: "handL", offset: { x: 0, y: -0.09, z: 0 } },
+  { name: "handTipL", parent: "handL", offset: { x: 0, y: -0.15, z: 0 } },
 
   { name: "upperArmR", parent: "chest", offset: { x: -0.19, y: 0.13, z: 0 } },
   { name: "forearmR", parent: "upperArmR", offset: { x: 0, y: -0.28, z: 0 } },
   { name: "handR", parent: "forearmR", offset: { x: 0, y: -0.26, z: 0 } },
-  { name: "handTipR", parent: "handR", offset: { x: 0, y: -0.09, z: 0 } },
+  { name: "handTipR", parent: "handR", offset: { x: 0, y: -0.15, z: 0 } },
 
   { name: "thighL", parent: "hips", offset: { x: 0.115, y: -0.04, z: 0 } },
   { name: "shinL", parent: "thighL", offset: { x: 0, y: -0.45, z: 0 } },
@@ -370,6 +370,10 @@ export interface Limb {
  * マネキンの見た目を作るパーツ一覧。
  * Domo AI のような映像変換に渡す素材なので、シルエットが潰れないよう
  * 手足はやや太めにして、体の各部が離れて見えないようにしてある。
+ *
+ * 手だけは例外で、細長く先を絞ってある。握り拳と開いた手はシルエットの
+ * 縦横比で見分けられていて、長さと幅が同じだと必ずグーに見える。
+ * 指を作らずに「開いた手」を読ませるには、長さを幅の倍近くまで伸ばすのが早い。
  */
 export const LIMBS: Limb[] = [
   { from: "hips", to: "spine", r0: 0.115, r1: 0.12 },
@@ -381,12 +385,12 @@ export const LIMBS: Limb[] = [
   { from: "chest", to: "upperArmL", r0: 0.1, r1: 0.075 },
   { from: "upperArmL", to: "forearmL", r0: 0.065, r1: 0.05 },
   { from: "forearmL", to: "handL", r0: 0.05, r1: 0.04 },
-  { from: "handL", to: "handTipL", r0: 0.042, r1: 0.03 },
+  { from: "handL", to: "handTipL", r0: 0.045, r1: 0.018 },
 
   { from: "chest", to: "upperArmR", r0: 0.1, r1: 0.075 },
   { from: "upperArmR", to: "forearmR", r0: 0.065, r1: 0.05 },
   { from: "forearmR", to: "handR", r0: 0.05, r1: 0.04 },
-  { from: "handR", to: "handTipR", r0: 0.042, r1: 0.03 },
+  { from: "handR", to: "handTipR", r0: 0.045, r1: 0.018 },
 
   { from: "hips", to: "thighL", r0: 0.105, r1: 0.095 },
   { from: "thighL", to: "shinL", r0: 0.095, r1: 0.068 },

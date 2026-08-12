@@ -81,6 +81,8 @@ export interface RecordDanceOptions {
   stage: Stage;
   draw: DrawOptions;
   bounce: number;
+  /** ノリの向き 0..1。0 が縦、1 が横。 */
+  groove?: number;
   /** 体の連鎖の強さ 0..1。 */
   chain?: number;
   /** ダイナミクス 0..1。 */
@@ -203,6 +205,7 @@ export async function recordDance(opts: RecordDanceOptions): Promise<RecordDance
       const clamped = Math.min(elapsed, duration);
       const skeleton = sampleSkeleton(opts.choreo, clamped / opts.secondsPerBeat, {
         bounce: opts.bounce,
+        groove: opts.groove,
         chain: opts.chain,
         snap: opts.snap,
         body: opts.body,

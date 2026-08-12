@@ -604,6 +604,67 @@ describe("肘", () => {
   });
 });
 
+describe("ノリ", () => {
+  const choreo = generateChoreography(16, settings({ seed: 4 }));
+
+  it("横ノリは拍ごとに重心が入れ替わる", () => {
+    const hipX = (count: number): number =>
+      sampleSkeleton(choreo, count, { bounce: 1, groove: 1, snap: 0 }).pos.hips.x;
+    // 拍の頭で乗り切っている。周期は2拍なので、隣の拍とは逆側にいる
+    const a = hipX(4);
+    const b = hipX(5);
+    const c = hipX(6);
+    expect(Math.sign(a)).toBe(-Math.sign(b));
+    expect(Math.sign(a)).toBe(Math.sign(c));
+    expect(Math.abs(a)).toBeGreaterThan(0.01);
+  });
+
+  it("横ノリでも足が地面から離れない", () => {
+    // 腰を横へ運ぶだけだと足がついてきてしまうので、太ももで打ち消している。
+    // ノリを切った状態と比べて、足の高さがほとんど変わらないことを見る。
+    //
+    // 参考: 縦ノリは膝の補正が近似なので 0.076 ずれる（横ノリは 0.016）。
+    // 横のほうが接地は素直で、これは元からの差
+    const feetY = (count: number, opts: { bounce: number; groove?: number }): number => {
+      const { pos } = sampleSkeleton(choreo, count, { ...opts, snap: 0 });
+      return Math.min(pos.footL.y, pos.footR.y);
+    };
+    for (let count = 0; count < 16; count += 0.25) {
+      const still = feetY(count, { bounce: 0 });
+      expect(Math.abs(feetY(count, { bounce: 1, groove: 1 }) - still)).toBeLessThan(0.03);
+    }
+  });
+
+  it("縦ノリと横ノリで動きの向きが入れ替わる", () => {
+    const span = (groove: number): { x: number; y: number } => {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let count = 0; count < 8; count += 0.05) {
+        const { pos } = sampleSkeleton(choreo, count, { bounce: 1, groove, snap: 0 });
+        minX = Math.min(minX, pos.hips.x);
+        maxX = Math.max(maxX, pos.hips.x);
+        minY = Math.min(minY, pos.hips.y);
+        maxY = Math.max(maxY, pos.hips.y);
+      }
+      return { x: maxX - minX, y: maxY - minY };
+    };
+    const vertical = span(0);
+    const horizontal = span(1);
+    expect(horizontal.x).toBeGreaterThan(vertical.x);
+    expect(vertical.y).toBeGreaterThan(horizontal.y);
+  });
+
+  it("横ノリが拍をまたいでも段差なく繋がる", () => {
+    const hipX = (count: number): number =>
+      sampleSkeleton(choreo, count, { bounce: 1, groove: 1, snap: 0 }).pos.hips.x;
+    const step = 0.005;
+    let worst = 0;
+    for (let count = 3.8; count <= 4.2; count += step) {
+      worst = Math.max(worst, Math.abs(hipX(count) - hipX(count - step)));
+    }
+    expect(worst).toBeLessThan(0.004);
+  });
+});
+
 describe("体型", () => {
   const EXTREMES: Body[] = [
     DEFAULT_BODY,
