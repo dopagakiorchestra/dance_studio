@@ -93,32 +93,94 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new CaptureAborted();
 }
 
-/** 読めない動画に共通で出す案内。 */
+/** 形式そのものが開けなかったときの案内。 */
 const UNSUPPORTED =
-  "この動画をブラウザが開けませんでした。iPhone で撮った .mov（HEVC）は Chrome や " +
-  "Firefox では開けないことが多いので、MP4（H.264）に変換するか、Safari で開いてみてください。";
+  "この動画をブラウザが開けませんでした。形式が対応していない可能性があります" +
+  "（iPhone の .mov / HEVC は Chrome や Firefox で開けないことが多い）。" +
+  "MP4（H.264）に変換して試してください。";
 
-/** 動画を読み込んで、メタデータが揃うまで待つ。 */
+/** 一度だけ発火するイベントを待つ。 */
+function once(el: EventTarget, name: string): Promise<void> {
+  return new Promise((resolve) => {
+    const hit = (): void => {
+      el.removeEventListener(name, hit);
+      resolve();
+    };
+    el.addEventListener(name, hit);
+  });
+}
+
+/**
+ * 動画を読み込んで、コマを取り出せる状態まで持っていく。
+ *
+ * **iOS Safari がここで引っかかる。** 画面に無い `<video>` を作って
+ * `loadeddata` を待つ、という素直な書き方だと、iOS では再生を一度始めるまで
+ * データを読み進めないので、いつまでもイベントが来ない（`error` すら来ない
+ * ので「20秒待っても開かない」で終わる）。実際に iPhone の Safari で、
+ * ふつうの .mp4 がそれで止まった。
+ *
+ * 対策は3つとも要る。
+ *
+ * 1. `<video>` を DOM に入れる。画面外でも、繋がっていないと iOS は読まない
+ * 2. `muted` と `playsinline` を**属性としても**付ける。プロパティだけだと
+ *    iOS の自動再生の判定に引っかかることがある
+ * 3. 一度 `play()` してすぐ `pause()` する。これでデコーダが動いて最初の
+ *    コマが用意される。ここを省くと、読み込めても `drawImage` が真っ白になる
+ */
 async function loadVideo(url: string): Promise<HTMLVideoElement> {
   const video = document.createElement("video");
   video.preload = "auto";
   video.muted = true;
+  video.defaultMuted = true;
   video.playsInline = true;
+  video.setAttribute("muted", "");
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  // 画面外に置くが、DOM には入れる（iOS は繋がっていない video を読まない）
+  video.style.cssText =
+    "position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;";
+  document.body.appendChild(video);
 
-  const ready = new Promise<HTMLVideoElement | "error">((resolve) => {
-    video.onloadeddata = () => resolve(video);
-    video.onerror = () => resolve("error");
+  let failed = false;
+  video.addEventListener("error", () => {
+    failed = true;
   });
-  video.src = url;
 
-  const result = await withTimeout(ready, LOAD_TIMEOUT);
-  if (result === "error") throw new Error(UNSUPPORTED);
-  if (result === null) {
+  // 大きさが分かった時点でいったん先へ進む。iOS は loadeddata まで来ないことがある
+  const sized = new Promise<void>((resolve) => {
+    const check = (): void => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) resolve();
+    };
+    for (const name of ["loadedmetadata", "loadeddata", "canplay", "durationchange"]) {
+      video.addEventListener(name, check);
+    }
+  });
+
+  video.src = url;
+  video.load();
+
+  if ((await withTimeout(sized, LOAD_TIMEOUT)) === null) {
+    if (failed) throw new Error(UNSUPPORTED);
     throw new Error(
-      `${LOAD_TIMEOUT / 1000} 秒待っても動画が開きませんでした。` + UNSUPPORTED,
+      `${LOAD_TIMEOUT / 1000} 秒待っても動画が開きませんでした。` +
+        "ファイルが大きすぎるか、この端末で扱えない形式かもしれません。" +
+        "短く切るか、MP4（H.264）に変換して試してください。",
     );
   }
-  if (!(video.videoWidth > 0 && video.videoHeight > 0)) throw new Error(UNSUPPORTED);
+  if (failed) throw new Error(UNSUPPORTED);
+
+  // デコーダを一度回して最初のコマを用意させる。これが無いと iOS では
+  // 読み込めていても canvas に転写した絵が空になる
+  try {
+    const playing = once(video, "timeupdate");
+    await video.play();
+    await withTimeout(playing, 3000);
+    video.pause();
+    video.currentTime = 0;
+  } catch {
+    // 自動再生を断られても、コマが取れるなら続行する
+  }
+
   return video;
 }
 
@@ -157,6 +219,10 @@ async function durationOf(video: HTMLVideoElement): Promise<number> {
  * そのコマを諦めて先へ進むほうがまし。
  */
 async function seekTo(video: HTMLVideoElement, seconds: number): Promise<boolean> {
+  // すでにその時刻なら `seeked` は飛んでこない。待つと時間切れになるだけ。
+  // 最初のコマ（0秒）が必ずこれに当たるので、入れておかないと毎回そこで詰まる
+  if (Math.abs(video.currentTime - seconds) < 1e-3 && video.readyState >= 2) return true;
+
   const done = new Promise<boolean>((resolve) => {
     const hit = (): void => {
       video.removeEventListener("seeked", hit);
@@ -212,10 +278,11 @@ export async function captureMotion(opts: CaptureOptions): Promise<MotionClip> {
   const { file, signal } = opts;
   const base = import.meta.env.BASE_URL ?? "/";
   const url = URL.createObjectURL(file);
+  let video: HTMLVideoElement | null = null;
 
   try {
     opts.onProgress?.(0, `動画を読み込んでいます（${(file.size / 1048576).toFixed(1)}MB）`);
-    const video = await loadVideo(url);
+    video = await loadVideo(url);
     throwIfAborted(signal);
 
     opts.onProgress?.(0.01, `${video.videoWidth}×${video.videoHeight} ／ 長さを調べています`);
@@ -298,6 +365,7 @@ export async function captureMotion(opts: CaptureOptions): Promise<MotionClip> {
       frames: smoothed,
     };
   } finally {
+    video?.remove();
     URL.revokeObjectURL(url);
   }
 }
